@@ -1,0 +1,5 @@
+node_modules
+.env
+baileys_auth_drimin
+data/store.json
+*.log

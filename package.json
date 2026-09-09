@@ -1,0 +1,23 @@
+{
+  "name": "drimin-bot-servicios",
+  "version": "2.0.0",
+  "description": "Bot Autónomo de WhatsApp, Google Calendar Sync, Validador QR y Requerimientos Jurídicos 24/7 para Drimin Services SpA",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^140.0.0",
+    "pino": "^9.2.0",
+    "qrcode": "^1.5.3",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

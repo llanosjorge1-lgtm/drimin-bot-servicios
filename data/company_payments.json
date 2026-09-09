@@ -1,0 +1,13 @@
+{
+  "drimin": {
+    "companyId": "drimin",
+    "companyName": "Drimin Services - Servicios Jurídicos & Derecho Minero",
+    "bankName": "Banco de Chile",
+    "accountType": "Cuenta Corriente",
+    "accountNumber": "88-98765-02",
+    "rut": "76.543.210-9",
+    "holderName": "Drimin Services SpA",
+    "emailNotification": "felipe.herrera@driminservices.cl",
+    "instructions": "Transfiera el honorario de la consulta jurídica a la atención del Abg. Felipe Herrera indicando su empresa o RUT en el asunto."
+  }
+}

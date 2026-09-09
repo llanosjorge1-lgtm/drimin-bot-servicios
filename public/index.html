@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drimin Services SpA - Panel de Control & Bot WhatsApp Legal</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar / Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">
+          <i class="fa-solid fa-scale-balanced"></i>
+        </div>
+        <div class="brand-text">
+          <h1>DRIMIN SERVICES</h1>
+          <span>Servicios Jurídicos & Derecho Minero</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="tab-status">
+          <i class="fa-solid fa-qrcode"></i>
+          <span>Conexión WhatsApp</span>
+        </button>
+        <button class="nav-item" data-tab="tab-chat">
+          <i class="fa-brands fa-whatsapp"></i>
+          <span>Simulador de Chat</span>
+        </button>
+        <button class="nav-item" data-tab="tab-appointments">
+          <i class="fa-solid fa-calendar-check"></i>
+          <span>Consultas Agendadas</span>
+        </button>
+        <button class="nav-item" data-tab="tab-incidents">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>Requerimientos Legales</span>
+        </button>
+        <button class="nav-item" data-tab="tab-vouchers">
+          <i class="fa-solid fa-ticket"></i>
+          <span>Pases Digitales QR</span>
+        </button>
+        <button class="nav-item" data-tab="tab-banking">
+          <i class="fa-solid fa-building-columns"></i>
+          <span>Datos Bancarios</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="legal-badge">
+          <i class="fa-solid fa-shield-halved"></i>
+          <div>
+            <strong>RUT: 76.543.210-9</strong>
+            <span>felipe.herrera@driminservices.cl</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="content-area">
+      <!-- Header -->
+      <header class="top-header">
+        <div class="header-title">
+          <h2 id="page-title">Conexión de WhatsApp Business</h2>
+          <p id="page-subtitle">Escanea el código QR para vinculación directa de la sesión de WhatsApp de Drimin Services</p>
+        </div>
+        <div class="header-actions">
+          <div class="connection-status-badgeDisconnected" id="global-status-badge">
+            <span class="dot"></span>
+            <span id="global-status-text">Verificando...</span>
+          </div>
+          <button class="btn btn-outline" id="btn-refresh-data">
+            <i class="fa-solid fa-rotate"></i> Actualizar
+          </button>
+        </div>
+      </header>
+
+      <!-- TAB 1: WhatsApp Status & QR Code -->
+      <section class="tab-content active" id="tab-status">
+        <div class="grid grid-2">
+          <div class="card card-qr">
+            <div class="card-header">
+              <h3><i class="fa-solid fa-qrcode text-gold"></i> Código QR de Vinculación</h3>
+              <span class="badge badge-gold">Drimin Session</span>
+            </div>
+            <div class="card-body text-center">
+              <div class="qr-container" id="qr-wrapper">
+                <div class="qr-placeholder" id="qr-placeholder">
+                  <i class="fa-solid fa-circle-notch fa-spin fa-3x"></i>
+                  <p>Cargando Código QR de WhatsApp...</p>
+                </div>
+                <img id="qr-image" src="" alt="Código QR WhatsApp" style="display: none;">
+              </div>
+              <div class="qr-instructions">
+                <ol>
+                  <li>Abre <strong>WhatsApp</strong> en tu teléfono.</li>
+                  <li>Ve a <strong>Menú / Configuración</strong> > <strong>Dispositivos Vinculados</strong>.</li>
+                  <li>Toca <strong>Vincular un dispositivo</strong> y escanea este código QR.</li>
+                </ol>
+              </div>
+              <div class="qr-actions">
+                <button class="btn btn-primary" id="btn-reset-qr">
+                  <i class="fa-solid fa-rotate-right"></i> Reiniciar Sesión & Emitir Nuevo QR
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3><i class="fa-solid fa-circle-info text-gold"></i> Información del Servicio</h3>
+            </div>
+            <div class="card-body">
+              <div class="info-list">
+                <div class="info-item">
+                  <span class="info-label">Empresa / Razón Social</span>
+                  <span class="info-value">Drimin Services SpA</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Giro / Especialidades</span>
+                  <span class="info-value">Servicios Jurídicos & Derecho Minero</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">RUT Oficial</span>
+                  <span class="info-value">76.543.210-9</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Correo de Notificaciones</span>
+                  <span class="info-value">felipe.herrera@driminservices.cl</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Directorio de Sesión Baileys</span>
+                  <span class="info-value"><code class="code-tag">./baileys_auth_drimin</code></span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Sincronización Cloud</span>
+                  <span class="info-value"><span class="badge badge-success">Google Calendar & n8n Ready</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: Chat Simulator -->
+      <section class="tab-content" id="tab-chat">
+        <div class="card chat-card">
+          <div class="card-header">
+            <h3><i class="fa-brands fa-whatsapp text-gold"></i> Simulador Interactivo WhatsApp Bot</h3>
+            <span class="badge badge-info">Modo Drimin Services</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="chat-window" id="chat-window">
+              <div class="chat-message bot-message">
+                <div class="message-content">
+                  ¡Hola! Buenas tardes ⚖️📜 Te damos la bienvenida al canal de atención oficial de Drimin Services (Servicios Jurídicos Especializados). Por favor indícanos tu nombre y en qué te podemos ayudar hoy:
+                  <br><br>
+                  • 1️⃣ <strong>Coordinación de consulta jurídica</strong><br>
+                  • 2️⃣ <strong>Cancelación de cita</strong><br>
+                  • 3️⃣ <strong>Reprogramación de cita</strong><br>
+                  • 4️⃣ <strong>Reporte de incidencia legal / requerimiento urgente</strong><br>
+                  • 5️⃣ <strong>Datos de transferencia bancaria</strong>
+                </div>
+                <span class="message-time">Bot Agent</span>
+              </div>
+            </div>
+            <div class="chat-input-area">
+              <input type="text" id="chat-input" placeholder="Escribe un mensaje de prueba (ej: Hola soy Carlos de Minera San José y quiero la opción 1)...">
+              <button class="btn btn-primary" id="btn-send-chat">
+                <i class="fa-solid fa-paper-plane"></i> Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: Appointments -->
+      <section class="tab-content" id="tab-appointments">
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-calendar-check text-gold"></i> Citas y Consultas Jurídicas Agendadas</h3>
+            <span class="badge badge-gold">Google Calendar Sync</span>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table" id="table-appointments">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Cliente / Contacto</th>
+                    <th>Empresa / Faena</th>
+                    <th>Asunto / Área Legal</th>
+                    <th>Fecha & Hora</th>
+                    <th>Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td colspan="6" class="text-center">Cargando consultas agendadas...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: Incidents -->
+      <section class="tab-content" id="tab-incidents">
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-triangle-exclamation text-gold"></i> Requerimientos Legales Urgentes & Incidencias</h3>
+            <span class="badge badge-danger">Tickets HSEC / Legal</span>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table" id="table-incidents">
+                <thead>
+                  <tr>
+                    <th>Ticket ID</th>
+                    <th>Cliente</th>
+                    <th>Empresa / Faena</th>
+                    <th>Descripción / Área</th>
+                    <th>Prioridad</th>
+                    <th>Estado</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td colspan="7" class="text-center">Cargando tickets de requerimientos...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: Vouchers -->
+      <section class="tab-content" id="tab-vouchers">
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-header">
+              <h3><i class="fa-solid fa-ticket text-gold"></i> Pases Digitales QR Emitidos</h3>
+            </div>
+            <div class="card-body">
+              <div class="vouchers-list" id="vouchers-container">
+                <p class="text-center">Cargando pases digitales...</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3><i class="fa-solid fa-circle-check text-gold"></i> Validador de Pase QR</h3>
+            </div>
+            <div class="card-body">
+              <div class="form-group">
+                <label>Ingrese Código de Pase (ej: DRM-A9B8-4321):</label>
+                <input type="text" id="redeem-code-input" class="form-control" placeholder="DRM-XXXX-XXXX">
+              </div>
+              <button class="btn btn-primary w-100 mt-3" id="btn-redeem-code">
+                <i class="fa-solid fa-check-double"></i> Validar Pase Digital
+              </button>
+
+              <div class="redeem-result mt-4" id="redeem-result" style="display: none;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: Banking -->
+      <section class="tab-content" id="tab-banking">
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-building-columns text-gold"></i> Datos Bancarios Oficiales</h3>
+            <span class="badge badge-gold">Drimin Services SpA</span>
+          </div>
+          <div class="card-body">
+            <form id="form-banking">
+              <div class="grid grid-2">
+                <div class="form-group">
+                  <label>Razón Social / Titular:</label>
+                  <input type="text" id="bank-holder" class="form-control" value="Drimin Services SpA">
+                </div>
+                <div class="form-group">
+                  <label>RUT:</label>
+                  <input type="text" id="bank-rut" class="form-control" value="76.543.210-9">
+                </div>
+                <div class="form-group">
+                  <label>Banco:</label>
+                  <input type="text" id="bank-name" class="form-control" value="Banco de Chile">
+                </div>
+                <div class="form-group">
+                  <label>Tipo de Cuenta:</label>
+                  <input type="text" id="bank-type" class="form-control" value="Cuenta Corriente">
+                </div>
+                <div class="form-group">
+                  <label>Número de Cuenta:</label>
+                  <input type="text" id="bank-number" class="form-control" value="88-98765-02">
+                </div>
+                <div class="form-group">
+                  <label>Correo Notificaciones:</label>
+                  <input type="email" id="bank-email" class="form-control" value="felipe.herrera@driminservices.cl">
+                </div>
+              </div>
+              <div class="form-group mt-3">
+                <label>Instrucciones de Pago:</label>
+                <textarea id="bank-instructions" class="form-control" rows="3">Transfiera el honorario de la consulta jurídica a la atención del Abg. Felipe Herrera indicando su empresa o RUT en el asunto.</textarea>
+              </div>
+              <button type="submit" class="btn btn-primary mt-3">
+                <i class="fa-solid fa-floppy-disk"></i> Guardar Datos Bancarios
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

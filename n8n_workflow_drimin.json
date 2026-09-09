@@ -1,0 +1,90 @@
+{
+  "name": "Drimin Services - Notificación Correo & Google Calendar Sync (Servicios Jurídicos)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "drimin-consulta-event",
+        "options": {}
+      },
+      "name": "1. Webhook Evento Drimin",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "start": "={{ $json.startIso || $json.body?.startIso }}",
+        "end": "={{ $json.endIso || $json.body?.endIso }}",
+        "summary": "={{ $json.calendarSummary || $json.summary || $json.title || $json.body?.calendarSummary || $json.body?.summary || $json.body?.title || ('Consulta Minera: ' + ($json.clientName || $json.body?.clientName || 'Cliente') + ' - Empresa: ' + ($json.unitNumber || $json.body?.unitNumber || 'General') + ' - Asunto: ' + ($json.meetingReason || $json.body?.meetingReason || 'Consulta Jurídica')) }}",
+        "description": "={{ $json.calendarDescription || $json.body?.calendarDescription || ('Se ha coordinado una consulta jurídica con ' + ($json.clientName || $json.body?.clientName) + ' (Empresa: ' + ($json.unitNumber || $json.body?.unitNumber) + ')') }}",
+        "additionalFields": {
+          "attendees": [
+            "felipe.herrera@driminservices.cl"
+          ]
+        }
+      },
+      "name": "2. Crear Evento en Google Calendar (Drimin)",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
+      "position": [
+        550,
+        200
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "google-calendar-cred-drimin",
+          "name": "Google Calendar Drimin Services"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "felipe.herrera@driminservices.cl",
+        "subject": "={{ $json.emailSubject || $json.body?.emailSubject || ('coordinación de consulta jurídica - Drimin Services: ' + ($json.clientName || $json.body?.clientName) + ' - Empresa: ' + ($json.unitNumber || $json.body?.unitNumber) + ' - Asunto: ' + ($json.meetingReason || $json.body?.meetingReason)) }}",
+        "html": "=<h2>⚖️📜 Nueva Consulta Jurídica Coordinada - Drimin Services</h2><p>Estimado Abg. Felipe Herrera y Equipo Jurídico de Drimin Services,</p><p>Se ha reservado de forma autónoma una reunión / consulta técnica legal con las siguientes especificaciones:</p><ul><li><b>Organización / Firma:</b> {{ $json.condoName || $json.body?.condoName || 'Drimin Services' }}</li><li><b>Cliente / Contacto:</b> {{ $json.clientName || $json.body?.clientName }}</li><li><b>Empresa / Faena / Razón Social:</b> {{ $json.unitNumber || $json.body?.unitNumber }}</li><li><b>Teléfono WhatsApp:</b> {{ $json.clientPhone || $json.body?.clientPhone }}</li><li><b>Área / Asunto Legal:</b> {{ $json.meetingReason || $json.body?.meetingReason }}</li><li><b>Fecha y Hora Agendada:</b> {{ $json.dateTime || $json.body?.dateTime }}</li><li><b>ID Ticket Solicitud:</b> {{ $json.ticketId || $json.body?.ticketId }}</li><li><b>Código Pase Digital QR:</b> {{ $json.voucherCode || $json.body?.voucherCode }}</li></ul><hr><p><i>Notificación enviada automáticamente a felipe.herrera@driminservices.cl y sincronizada en Google Calendar.</i></p>"
+      },
+      "name": "3. Enviar Correo a felipe.herrera@driminservices.cl",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        550,
+        420
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-drimin",
+          "name": "SMTP / Gmail Drimin Services"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "1. Webhook Evento Drimin": {
+      "main": [
+        [
+          {
+            "node": "2. Crear Evento en Google Calendar (Drimin)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "3. Enviar Correo a felipe.herrera@driminservices.cl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
