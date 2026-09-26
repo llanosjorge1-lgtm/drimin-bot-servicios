@@ -1,5 +1,6 @@
 const { createVoucher } = require('./voucherService');
 const { readDb, writeDb } = require('./db');
+const { dispatchDriminEvent } = require('./emailService');
 
 /**
  * Procesa la recepción y verificación de comprobantes de pago para Drimin Services SpA
@@ -46,29 +47,18 @@ async function processPaymentReceipt({ message, clientName, unitNumber, condoNam
   db.receipts.unshift(receiptRecord);
   writeDb(db);
 
-  const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-  if (n8nWebhookUrl) {
-    try {
-      await fetch(n8nWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'PAYMENT_RECEIPT_SUBMITTED',
-          emailSubject: 'comprobante de pago',
-          receiptCode,
-          clientName,
-          unitNumber,
-          operationNumber: opNumber,
-          amountStr,
-          voucherCode: voucher.code,
-          adminEmail
-        })
-      });
-      console.log(`🧾 Comprobante de honorarios Drimin ${receiptCode} despachado a n8n!`);
-    } catch (e) {
-      console.error("Error enviando comprobante Drimin a n8n:", e.message);
-    }
-  }
+  // Despacho nativo de correo Ferozo + n8n opcional
+  dispatchDriminEvent({
+    event: 'PAYMENT_RECEIPT_SUBMITTED',
+    emailSubject: 'comprobante de pago',
+    receiptCode,
+    clientName,
+    unitNumber,
+    operationNumber: opNumber,
+    amountStr,
+    voucherCode: voucher.code,
+    adminEmail
+  });
 
   const nameTag = clientName ? `@${clientName}` : 'Cliente';
   const replyText = `🧾 **COMPROBANTE DE HONORARIOS JURÍDICOS VERIFICADO** 💳✨\n\n` +

@@ -1,0 +1,39 @@
+========================================================================
+    DRIMIN SERVICES SpA - GUÍA RÁPIDA DE INICIO LOCAL (FELIPE)
+========================================================================
+
+¡Hola Felipe! Este paquete contiene el Asistente Virtual y Panel Local 
+de Drimin Services para atender clientes 24/7 y gestionar citas.
+
+PASOS PARA INICIAR EL SISTEMA:
+------------------------------
+
+1. INSTALAR NODE.JS (Solo la primera vez si no lo tienes instalado):
+   Descarga e instala la versión recomendada (LTS) desde:
+   👉 https://nodejs.org/
+   (Instalación estándar: Siguiente -> Siguiente -> Finalizar).
+
+2. INICIAR EL ASISTENTE:
+   Haz doble clic sobre el archivo:
+   👉 "INICIAR_DRIMIN.bat"
+
+3. ¡LISTO!
+   El programa iniciará el bot y se abrirá automáticamente en tu 
+   navegador en:
+   👉 http://localhost:3000
+
+¿QUÉ PUEDES HACER DESDE EL PANEL?
+---------------------------------
+• Pestaña "Consultas Agendadas": Ver las citas agendadas por clientes, 
+  empresas y sus pases digitales QR emitidos.
+• Pestaña "Requerimientos Legales": Gestionar solicitudes urgentes de 
+  minería, fiscalizaciones y asesoría corporativa.
+• Sincronización Outlook: Cada cita que el cliente agende te llegará a tu 
+  correo (felipe.herrera@driminservices.cl) con el archivo de calendario 
+  para agregarlo a tu Outlook con un solo clic.
+• Intervención humana: Si tú respondes en WhatsApp a cualquier cliente, 
+  el bot se silencia automáticamente por 2 horas en ese chat para no 
+  interrumpir tu conversación personal.
+
+Soporte y Consultas: Drimin Services SpA
+========================================================================

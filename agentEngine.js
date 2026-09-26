@@ -1,5 +1,7 @@
 const { readDb, writeDb, getCompanyPaymentDetails, addPendingRequest } = require('./db');
 const { createVoucher } = require('./voucherService');
+const { dispatchDriminEvent } = require('./emailService');
+const { generateGeminiReply } = require('./geminiService');
 
 const DRIMIN_CONFIG = {
   name: "Drimin Services - Servicios Jurídicos & Derecho Minero",
@@ -12,34 +14,28 @@ const DRIMIN_CONFIG = {
   quickPromptVoucher: "Reportar Requerimiento Jurídico / Consulta Urgente",
   quickPromptPrecios: "Ver Especialidades Legales & Datos Bancarios",
   services: [
-    { name: "Derecho Minero & Concesiones (Google Calendar)", duration: "30 min", price: "Sin costo ($0)" },
-    { name: "Energía & Proyectos Eléctricos / Regulaciones", duration: "30 min", price: "Sin costo ($0)" },
-    { name: "Terrenos Fiscales y Gestión Territorial (Bienes Nacionales)", duration: "30 min", price: "Sin costo ($0)" },
-    { name: "Asesoría Legal a Empresas (Contratos & Sociedades)", duration: "30 min", price: "Sin costo ($0)" },
-    { name: "Resolución de Controversias y Recuperación de Activos", duration: "30 min", price: "Sin costo ($0)" },
-    { name: "Compliance y Corporativo (Modelos de Prevención)", duration: "30 min", price: "Sin costo ($0)" }
+    { name: "Derecho Minero & Concesiones (Outlook Calendar)", duration: "1 hora", price: "Sin costo ($0)" },
+    { name: "Energía & Proyectos Eléctricos / Regulaciones", duration: "1 hora", price: "Sin costo ($0)" },
+    { name: "Terrenos Fiscales y Gestión Territorial (Bienes Nacionales)", duration: "1 hora", price: "Sin costo ($0)" },
+    { name: "Asesoría Legal a Empresas (Contratos & Sociedades)", duration: "1 hora", price: "Sin costo ($0)" },
+    { name: "Resolución de Controversias y Recuperación de Activos", duration: "1 hora", price: "Sin costo ($0)" },
+    { name: "Compliance y Corporativo (Modelos de Prevención)", duration: "1 hora", price: "Sin costo ($0)" }
   ],
-  greeting: `¡Hola! Buenas tardes ⚖️📜 Te damos la bienvenida al canal de atención oficial de Drimin Services (Servicios Jurídicos Especializados). Por favor indícanos tu nombre y en qué te podemos ayudar hoy:\n\n` +
-    `• 1️⃣ **Coordinación de consulta jurídica** (Derecho Minero, Energía, Terrenos Fiscales, Asesoría Empresas, Controversias, Compliance)\n` +
-    `• 2️⃣ **Cancelación de cita**\n` +
-    `• 3️⃣ **Reprogramación de cita**\n` +
-    `• 4️⃣ **Reporte de incidencia legal / requerimiento urgente**\n` +
-    `• 5️⃣ **Datos de transferencia bancaria**`
+  greeting: `¡Hola! Un gusto saludarte ⚖️📜 Te escribe el asistente virtual del **Abogado Felipe Herrera** en **Drimin Services SpA** (Servicios Jurídicos Especializados & Derecho Minero).\n\n` +
+    `¿En qué te podemos asesorar el día de hoy?\n\n` +
+    `• 1️⃣ **Coordinar una consulta jurídica** (Derecho Minero, Energía, Terrenos Fiscales, Empresas o Litigios)\n` +
+    `• 2️⃣ **Cancelar una cita previa**\n` +
+    `• 3️⃣ **Reprogramar una reunión**\n` +
+    `• 4️⃣ **Reporte de urgencia legal o fiscalización**\n` +
+    `• 5️⃣ **Datos bancarios oficiales**\n\n` +
+    `*(O si prefieres, cuéntame directamente qué necesitas y con gusto te oriento).*`
 };
 
-// BLOQUES OFICIALES DE REUNIÓN DE LUNES A VIERNES (30 MINUTOS CADA UNO)
+// BLOQUES OFICIALES DE REUNIÓN DE LUNES A VIERNES (1 HORA CADA UNO: 15:00 A 18:00 HRS)
 const MEETING_SLOTS = [
-  { id: 1, label: "09:00 a 09:30 hrs", hour: 9, minute: 0, timeStr: "09:00", block: "MAÑANA" },
-  { id: 2, label: "09:30 a 10:00 hrs", hour: 9, minute: 30, timeStr: "09:30", block: "MAÑANA" },
-  { id: 3, label: "10:00 a 10:30 hrs", hour: 10, minute: 0, timeStr: "10:00", block: "MAÑANA" },
-  { id: 4, label: "10:30 a 11:00 hrs", hour: 10, minute: 30, timeStr: "10:30", block: "MAÑANA" },
-  { id: 5, label: "11:30 a 12:00 hrs", hour: 11, minute: 30, timeStr: "11:30", block: "MAÑANA" },
-  { id: 6, label: "12:00 a 12:30 hrs", hour: 12, minute: 0, timeStr: "12:00", block: "MAÑANA" },
-  { id: 7, label: "12:30 a 13:00 hrs", hour: 12, minute: 30, timeStr: "12:30", block: "MAÑANA" },
-  { id: 8, label: "15:00 a 15:30 hrs", hour: 15, minute: 0, timeStr: "15:00", block: "TARDE" },
-  { id: 9, label: "15:30 a 16:00 hrs", hour: 15, minute: 30, timeStr: "15:30", block: "TARDE" },
-  { id: 10, label: "16:00 a 16:30 hrs", hour: 16, minute: 0, timeStr: "16:00", block: "TARDE" },
-  { id: 11, label: "16:30 a 17:00 hrs", hour: 16, minute: 30, timeStr: "16:30", block: "TARDE" }
+  { id: 1, label: "15:00 a 16:00 hrs", hour: 15, minute: 0, timeStr: "15:00", block: "TARDE" },
+  { id: 2, label: "16:00 a 17:00 hrs", hour: 16, minute: 0, timeStr: "16:00", block: "TARDE" },
+  { id: 3, label: "17:00 a 18:00 hrs", hour: 17, minute: 0, timeStr: "17:00", block: "TARDE" }
 ];
 
 function getNextBusinessDays(count = 3) {
@@ -274,22 +270,14 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
         `Tu consulta técnica agendada para el **${aptToCancel.dateTime}** ha sido **cancelada exitosamente** y el bloque de horario se ha **liberado** en el sistema.\n\n` +
         `Si en el futuro deseas agendar una nueva cita, estaremos gustosos de atenderte. ¡Que tengas un excelente día! ⛏️📜`;
 
-      const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-      if (n8nWebhookUrl) {
-        try {
-          fetch(n8nWebhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              event: 'MEETING_CANCELED',
-              emailSubject: 'cancelación de reunión',
-              clientName: nameTag,
-              appointmentId: aptToCancel.id,
-              adminEmail
-            })
-          }).catch(() => {});
-        } catch(e) {}
-      }
+      // Despacho nativo de correo Outlook Ferozo + n8n opcional
+      dispatchDriminEvent({
+        event: 'MEETING_CANCELED',
+        emailSubject: 'cancelación de reunión',
+        clientName: nameTag,
+        appointmentId: aptToCancel.id,
+        adminEmail
+      });
 
       return { reply: responseText, toolExecuted: { name: 'cancelar_cita', result: { canceledId: aptToCancel.id } }, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
     } else {
@@ -320,9 +308,8 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
       `• 📆 **${day1Formatted}**\n` +
       `• 📆 **${day2Formatted}**\n` +
       `• 📆 **${day3Formatted}**\n\n` +
-      `Bloques libres para el **${targetFormatted}**:\n\n` +
-      (morningList ? `🌅 **BLOQUE MAÑANA**:\n${morningList}\n\n` : '') +
-      (afternoonList ? `🌆 **BLOQUE TARDE**:\n${afternoonList}\n\n` : '') +
+      `Bloques libres de 1 hora para el **${targetFormatted}**:\n\n` +
+      (afternoonList ? `🕒 **HORARIOS DISPONIBLES (15:00 A 18:00 HRS)**:\n${afternoonList}\n\n` : '') +
       `Por favor indícanos el nuevo día y número de bloque u horario que prefieres.`;
 
     return { reply: responseText, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
@@ -341,34 +328,32 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
   const trimmedMsg = message.trim();
   const mainMenuDigitMatch = trimmedMsg.match(/^([1-5])$/);
 
-  if (wasShowingMainMenu && mainMenuDigitMatch) {
-    const optNum = parseInt(mainMenuDigitMatch[1], 10);
+  let optNum = (wasShowingMainMenu && mainMenuDigitMatch) ? parseInt(mainMenuDigitMatch[1], 10) : null;
+  if (!optNum) {
+    if (textLower.includes('agendar') || textLower.includes('reunion') || textLower.includes('reunión') || textLower.includes('cita') || textLower.includes('coordinar')) {
+      optNum = 1;
+    } else if (textLower.includes('datos bancarios') || textLower.includes('cuenta corriente') || textLower.includes('transferir') || textLower.includes('datos de transferencia')) {
+      optNum = 5;
+    }
+  }
+
+  if (optNum) {
     if (optNum === 1) {
-      const morningList = availableSlots.filter(s => s.block === 'MAÑANA').map(s => `• **${s.id}**️⃣ ${s.label}`).join('\n');
       const afternoonList = availableSlots.filter(s => s.block === 'TARDE').map(s => `• **${s.id}**️⃣ ${s.label}`).join('\n');
       const nameTag = clientName ? `@${clientName}` : 'Cliente';
 
-      const responseText = `¡Hola **${nameTag}**, gusto en saludar! ⚖️📜\n\n` +
-        `Claro que sí, con gusto te ayudamos a coordinar una consulta jurídica con el equipo de Drimin Services.\n\n` +
-        `Nuestras áreas de especialidad legal son:\n` +
-        `• ⚖️ **Derecho Minero**\n` +
-        `• ⚡ **Energía**\n` +
-        `• 🗺️ **Terrenos Fiscales y Gestión Territorial**\n` +
-        `• 🏢 **Asesoría Legal a Empresas**\n` +
-        `• 🛡️ **Resolución de Controversias y Recuperación de Activos**\n` +
-        `• 📋 **Compliance y Corporativo**\n\n` +
-        `Para registrar la cita en **Google Calendar** y notificar por correo a la dirección jurídica (\`${adminEmail}\`), por favor indícanos:\n` +
-        `• 1️⃣ **Nombre y Apellido completo**\n` +
-        `• 2️⃣ **Empresa / Razón Social / Unidad** (ej: Minera San José / Santiago)\n` +
-        `• 3️⃣ **Asunto o Área Legal de la consulta** (ej: Derecho Minero - revisión de concesión)\n\n` +
+      const responseText = `¡Hola **${nameTag}**, qué gusto saludarte! ⚖️📜\n\n` +
+        `Con mucho gusto coordinamos tu consulta jurídica con el **Abogado Felipe Herrera**.\n\n` +
+        `Para agendar tu bloque de 1 hora y sincronizar la reunión directamente en el **Calendario Oficial de Outlook**, por favor indícanos:\n\n` +
+        `• 1️⃣ Tu **nombre y apellido**\n` +
+        `• 2️⃣ Tu **empresa o faena** (si aplica)\n` +
+        `• 3️⃣ Un breve **asunto o motivo de la consulta** (ej: concesión minera, contratos, terrenos)\n\n` +
         `📅 **PRÓXIMOS DÍAS HÁBILES DISPONIBLES**:\n` +
         `• 📆 **${day1Formatted}**\n` +
         `• 📆 **${day2Formatted}**\n` +
         `• 📆 **${day3Formatted}**\n\n` +
-        `Bloques libres para el **${targetFormatted}**:\n\n` +
-        (morningList ? `🌅 **BLOQUE MAÑANA**:\n${morningList}\n\n` : '') +
-        (afternoonList ? `🌆 **BLOQUE TARDE**:\n${afternoonList}\n\n` : '') +
-        `Por favor indícanos tus datos y el número de bloque u horario que prefieres.`;
+        (afternoonList ? `🕒 **HORARIOS DE ATENCIÓN DE 1 HORA (${targetFormatted})**:\n${afternoonList}\n\n` : '') +
+        `Por favor indícanos el bloque que te acomoda y tus datos para dejarla reservada de inmediato.`;
 
       return { reply: responseText, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
     } else if (optNum === 4) {
@@ -416,24 +401,16 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
   let matchedSlot = null;
 
   if (wasAwaitingSlot) {
-    const digitMatch = trimmedMsg.match(/\b([1-9]|10|11)\b/i);
+    const digitMatch = trimmedMsg.match(/\b([1-3])\b/i);
     if (digitMatch && digitMatch[1]) {
       const slotId = parseInt(digitMatch[1], 10);
       matchedSlot = MEETING_SLOTS.find(s => s.id === slotId);
     }
 
     if (!matchedSlot) {
-      if (textLower.includes('9:30') || textLower.includes('09:30')) matchedSlot = MEETING_SLOTS[1];
-      else if (textLower.includes('9:00') || textLower.includes('09:00') || textLower.includes('9 de la mañana') || textLower.includes('9 am') || textLower.includes('a las 9')) matchedSlot = MEETING_SLOTS[0];
-      else if (textLower.includes('10:30')) matchedSlot = MEETING_SLOTS[3];
-      else if (textLower.includes('10:00') || textLower.includes('10 am') || textLower.includes('a las 10')) matchedSlot = MEETING_SLOTS[2];
-      else if (textLower.includes('11:30')) matchedSlot = MEETING_SLOTS[4];
-      else if (textLower.includes('12:30')) matchedSlot = MEETING_SLOTS[6];
-      else if (textLower.includes('12:00') || textLower.includes('12 pm') || textLower.includes('a las 12')) matchedSlot = MEETING_SLOTS[5];
-      else if (textLower.includes('15:30') || textLower.includes('3:30')) matchedSlot = MEETING_SLOTS[8];
-      else if (textLower.includes('15:00') || textLower.includes('3 pm') || textLower.includes('a las 3')) matchedSlot = MEETING_SLOTS[7];
-      else if (textLower.includes('16:30') || textLower.includes('4:30')) matchedSlot = MEETING_SLOTS[10];
-      else if (textLower.includes('16:00') || textLower.includes('4 pm') || textLower.includes('a las 4')) matchedSlot = MEETING_SLOTS[9];
+      if (textLower.includes('15:00') || textLower.includes('3 pm') || textLower.includes('a las 3') || textLower.includes('a las 15') || textLower.includes('15 a 16') || textLower.includes('3 a 4')) matchedSlot = MEETING_SLOTS[0];
+      else if (textLower.includes('16:00') || textLower.includes('4 pm') || textLower.includes('a las 4') || textLower.includes('a las 16') || textLower.includes('16 a 17') || textLower.includes('4 a 5')) matchedSlot = MEETING_SLOTS[1];
+      else if (textLower.includes('17:00') || textLower.includes('5 pm') || textLower.includes('a las 5') || textLower.includes('a las 17') || textLower.includes('17 a 18') || textLower.includes('5 a 6')) matchedSlot = MEETING_SLOTS[2];
     }
   }
 
@@ -483,8 +460,7 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
 
       const responseText = `⚠️ **${nameTag}**, el horario de las **${matchedSlot.label}** para el **${targetFormatted}** ya se encuentra **reservado**.\n\n` +
         `Para evitar choques de horario, te mostramos los bloques que aún están **disponibles para el ${targetFormatted}**:\n\n` +
-        (morningList ? `🌅 **BLOQUE MAÑANA**:\n${morningList}\n\n` : '') +
-        (afternoonList ? `🌆 **BLOQUE TARDE**:\n${afternoonList}\n\n` : '') +
+        (afternoonList ? `🕒 **HORARIOS DISPONIBLES (15:00 A 18:00 HRS)**:\n${afternoonList}\n\n` : '') +
         `Por favor indícanos otro número de bloque u horario disponible.`;
       return { reply: responseText, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
     } else {
@@ -532,9 +508,8 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
       const mStr = String(matchedSlot.minute).padStart(2, '0');
 
       const startIso = `${year}-${month}-${day}T${hStr}:${mStr}:00-03:00`;
-      let endHour = matchedSlot.hour;
-      let endMinute = matchedSlot.minute + 30;
-      if (endMinute >= 60) { endHour += 1; endMinute -= 60; }
+      const endHour = matchedSlot.hour + 1; // Duración oficial de 1 hora
+      const endMinute = matchedSlot.minute;
       const endHStr = String(endHour).padStart(2, '0');
       const endMStr = String(endMinute).padStart(2, '0');
       const endIso = `${year}-${month}-${day}T${endHStr}:${endMStr}:00-03:00`;
@@ -562,34 +537,25 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
         propertyAddress: condoName
       });
 
-      // Despacho n8n
-      const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-      if (n8nWebhookUrl) {
-        try {
-          fetch(n8nWebhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              event: 'MEETING_BOOKED',
-              emailSubject: `coordinación de reunión - ${calendarSummary}`,
-              clientName: finalName,
-              unitNumber: unitNumber,
-              meetingReason: meetingReason,
-              dateTime: `${targetFormatted} (${matchedSlot.label})`,
-              startIso,
-              endIso,
-              summary: calendarSummary,
-              adminEmail,
-              qrCodeUrl: voucher.qrCodeDataUrl,
-              voucherCode: voucher.code
-            })
-          }).catch(() => {});
-        } catch(e) {}
-      }
+      // Despacho nativo de correo con archivo .ics para Outlook + n8n opcional
+      dispatchDriminEvent({
+        event: 'MEETING_BOOKED',
+        emailSubject: `coordinación de reunión - ${calendarSummary}`,
+        clientName: finalName,
+        unitNumber: unitNumber,
+        meetingReason: meetingReason,
+        dateTime: `${targetFormatted} (${matchedSlot.label})`,
+        startIso,
+        endIso,
+        summary: calendarSummary,
+        adminEmail,
+        qrCodeUrl: voucher.qrCodeDataUrl,
+        voucherCode: voucher.code
+      });
 
       const responseText = `✅ **CONSULTA JURÍDICA AGENDADA CON ÉXITO** 📅\n\n` +
         `Estimado/a **@${finalName}** (Empresa **${unitNumber}**):\n\n` +
-        `Tu cita ha sido agendada y registrada en **Google Calendar** para el **${targetFormatted}** en el bloque de **${matchedSlot.label}**.\n\n` +
+        `Tu cita ha sido agendada y registrada en el **Calendario Oficial de Drimin Services (Outlook)** para el **${targetFormatted}** en el bloque de **${matchedSlot.label}**.\n\n` +
         `• 📋 **Asunto de la consulta**: *${meetingReason}*\n` +
         `• 🏢 **Atención**: Drimin Services SpA (Abg. Felipe Herrera)\n` +
         `• 🎟️ **Código de Pase QR**: \`${voucher.code}\`\n\n` +
@@ -605,14 +571,35 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
     }
   }
 
-  // RESPUESTA POR DEFECTO CON EL SALUDO INICIAL Y EL MENÚ OFICIAL
+  // RESPUESTA INTELIGENTE Y HUMANIZADA CON GEMINI
+  const geminiReply = await generateGeminiReply({
+    message,
+    history,
+    senderPhone: residentPhone,
+    pushName: clientName || pushName,
+    availableSlots
+  });
+
+  if (geminiReply) {
+    return {
+      reply: geminiReply,
+      toolExecuted: null,
+      voucher: null,
+      industry: 'drimin',
+      greeting: DRIMIN_CONFIG.greeting
+    };
+  }
+
+  // FALLBACK AL SALUDO INICIAL Y EL MENÚ OFICIAL
   const nameTag = clientName ? `@${clientName}` : 'Cliente';
-  const defaultReply = `¡Hola **${nameTag}**! Buenas tardes ⚖️📜 Te damos la bienvenida al canal de atención oficial de Drimin Services (Servicios Jurídicos Especializados). Por favor indícanos en qué te podemos ayudar hoy:\n\n` +
-    `• 1️⃣ **Coordinación de consulta jurídica** (Derecho Minero, Energía, Terrenos Fiscales, Asesoría Empresas, Controversias, Compliance)\n` +
-    `• 2️⃣ **Cancelación de cita**\n` +
-    `• 3️⃣ **Reprogramación de cita**\n` +
-    `• 4️⃣ **Reporte de incidencia legal / requerimiento urgente**\n` +
-    `• 5️⃣ **Datos de transferencia bancaria**`;
+  const defaultReply = `¡Hola **${nameTag}**! Un gusto saludarte ⚖️📜 Te escribe el asistente virtual del **Abogado Felipe Herrera** en **Drimin Services SpA**.\n\n` +
+    `¿En qué te podemos colaborar el día de hoy?\n\n` +
+    `• 1️⃣ **Coordinar una consulta jurídica** (Derecho Minero, Energía, Terrenos Fiscales, Empresas o Litigios)\n` +
+    `• 2️⃣ **Cancelar una cita previa**\n` +
+    `• 3️⃣ **Reprogramar una reunión**\n` +
+    `• 4️⃣ **Reportar un requerimiento legal o fiscalización urgente**\n` +
+    `• 5️⃣ **Consultar datos bancarios oficiales**\n\n` +
+    `*(O si prefieres, cuéntame directamente qué necesitas y con gusto te oriento).*`;
 
   return {
     reply: defaultReply,

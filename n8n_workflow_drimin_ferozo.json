@@ -1,0 +1,578 @@
+{
+  "name": "Drimin Services - Workflow Autónomo Ferozo + Outlook (Servicios Jurídicos 24/7)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "drimin-consulta-event",
+        "options": {
+          "responseMode": "onReceived",
+          "responseData": "allEntries"
+        }
+      },
+      "name": "1. Webhook Evento Drimin",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 400],
+      "webhookId": "drimin-consulta-event"
+    },
+
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.body?.event || $json.event }}", "rightValue": "MEETING_BOOKED", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputLabel": "Cita Agendada"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.body?.event || $json.event }}", "rightValue": "MEETING_CANCELED", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputLabel": "Cita Cancelada"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.body?.event || $json.event }}", "rightValue": "INCIDENT_REPORTED", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputLabel": "Incidencia Legal"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.body?.event || $json.event }}", "rightValue": "PAYMENT_RECEIPT_SUBMITTED", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputLabel": "Pago Recibido"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "name": "2. Router por Tipo de Evento",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [500, 400]
+    },
+
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Generar archivo ICS para invitación de calendario Outlook\nconst data = $input.first().json;\nconst body = data.body || data;\n\nconst startIso = body.startIso || '';\nconst endIso = body.endIso || '';\nconst clientName = body.clientName || 'Cliente';\nconst unitNumber = body.unitNumber || 'Empresa';\nconst meetingReason = body.meetingReason || 'Consulta Jurídica';\nconst summary = body.summary || body.calendarSummary || `Consulta Minera: ${clientName} - ${unitNumber}`;\nconst dateTime = body.dateTime || '';\nconst voucherCode = body.voucherCode || 'N/A';\nconst adminEmail = body.adminEmail || 'felipe.herrera@driminservices.cl';\n\n// Generar UID único para el evento\nconst uid = `drimin-${Date.now()}-${Math.random().toString(36).substr(2, 6)}@driminservices.cl`;\n\n// Convertir ISO a formato ICS (YYYYMMDDTHHMMSS)\n// Input: 2026-09-15T10:00:00-03:00\nfunction isoToIcs(iso) {\n  if (!iso) return '';\n  return iso.replace(/[-:]/g, '').split(/[.+]/)[0].replace(/(\\d{8}T\\d{6}).*/, '$1');\n}\n\nconst dtStart = isoToIcs(startIso);\nconst dtEnd = isoToIcs(endIso);\nconst now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';\n\nconst icsContent = [\n  'BEGIN:VCALENDAR',\n  'VERSION:2.0',\n  'PRODID:-//Drimin Services SpA//Bot Autonomo v2.0//ES',\n  'CALSCALE:GREGORIAN',\n  'METHOD:REQUEST',\n  'BEGIN:VTIMEZONE',\n  'TZID:America/Santiago',\n  'BEGIN:STANDARD',\n  'DTSTART:19700404T000000',\n  'RRULE:FREQ=YEARLY;BYMONTH=4;BYDAY=1SA',\n  'TZOFFSETFROM:-0300',\n  'TZOFFSETTO:-0400',\n  'TZNAME:CLT',\n  'END:STANDARD',\n  'BEGIN:DAYLIGHT',\n  'DTSTART:19700905T000000',\n  'RRULE:FREQ=YEARLY;BYMONTH=9;BYDAY=1SA',\n  'TZOFFSETFROM:-0400',\n  'TZOFFSETTO:-0300',\n  'TZNAME:CLST',\n  'END:DAYLIGHT',\n  'END:VTIMEZONE',\n  'BEGIN:VEVENT',\n  `UID:${uid}`,\n  `DTSTAMP:${now}`,\n  `DTSTART;TZID=America/Santiago:${dtStart}`,\n  `DTEND;TZID=America/Santiago:${dtEnd}`,\n  `SUMMARY:${summary}`,\n  `DESCRIPTION:Consulta jurídica coordinada automáticamente por Drimin Bot.\\\\nCliente: ${clientName}\\\\nEmpresa/Faena: ${unitNumber}\\\\nAsunto: ${meetingReason}\\\\nFecha: ${dateTime}\\\\nVoucher QR: ${voucherCode}`,\n  `ORGANIZER;CN=Abg. Felipe Herrera:mailto:felipe.herrera@driminservices.cl`,\n  `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=Abg. Felipe Herrera:mailto:felipe.herrera@driminservices.cl`,\n  'STATUS:CONFIRMED',\n  'PRIORITY:5',\n  `LOCATION:Oficinas Drimin Services SpA`,\n  'BEGIN:VALARM',\n  'TRIGGER:-PT2H',\n  'ACTION:DISPLAY',\n  `DESCRIPTION:Recordatorio: ${summary}`,\n  'END:VALARM',\n  'BEGIN:VALARM',\n  'TRIGGER:-PT30M',\n  'ACTION:DISPLAY',\n  `DESCRIPTION:En 30 min: ${summary}`,\n  'END:VALARM',\n  'END:VEVENT',\n  'END:VCALENDAR'\n].join('\\r\\n');\n\n// Convertir a binary para adjuntar como .ics\nconst binaryData = Buffer.from(icsContent, 'utf-8');\n\nreturn [{\n  json: {\n    ...body,\n    icsUid: uid,\n    icsGenerated: true\n  },\n  binary: {\n    icsFile: {\n      data: binaryData.toString('base64'),\n      mimeType: 'text/calendar; method=REQUEST',\n      fileName: `consulta-drimin-${clientName.replace(/\\s+/g, '-').toLowerCase()}.ics`,\n      fileExtension: 'ics'\n    }\n  }\n}];"
+      },
+      "name": "3. Generar ICS Calendario Outlook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 0]
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "felipe.herrera@driminservices.cl",
+        "subject": "=⚖️📅 Nueva Consulta Jurídica Agendada - {{ $json.clientName || 'Cliente' }} | {{ $json.unitNumber || 'Empresa' }}",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #0f172a, #1e293b); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0; color: #fbbf24;\">⚖️📅 Nueva Consulta Jurídica Agendada</h2>\n<p style=\"margin: 8px 0 0; opacity: 0.85;\">Drimin Services - Sistema Autónomo de Atención 24/7</p>\n</div>\n<div style=\"background: #f8fafc; padding: 24px 30px; border: 1px solid #e2e8f0;\">\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0; width: 40%;\">🏢 Organización</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">Drimin Services SpA</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">👤 Cliente</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.clientName }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">🏗️ Empresa / Faena</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.unitNumber }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">📋 Asunto Legal</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.meetingReason }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">📅 Fecha y Hora</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.dateTime }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">🎟️ Código Pase QR</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\"><code>{{ $json.voucherCode || 'N/A' }}</code></td></tr>\n</table>\n<p style=\"margin-top: 16px; padding: 12px; background: #dbeafe; border-radius: 8px; color: #1e40af;\">📌 Se adjunta archivo .ics para agregar automáticamente a su Calendario de Outlook. Haga doble clic en el adjunto para aceptar la cita.</p>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | RUT 76.543.210-9 | felipe.herrera@driminservices.cl</div>\n</div>",
+        "options": {
+          "attachments": "icsFile"
+        }
+      },
+      "name": "4. Email Admin + Evento Outlook",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 0],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "={{ $json.adminEmail || 'felipe.herrera@driminservices.cl' }}",
+        "subject": "=✅ Confirmación de su Consulta Jurídica - Drimin Services | {{ $json.dateTime }}",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #0f172a, #1e293b); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0; color: #fbbf24;\">✅ Su Consulta Jurídica ha sido Agendada</h2>\n<p style=\"margin: 8px 0 0; opacity: 0.85;\">Drimin Services SpA - Servicios Jurídicos Especializados</p>\n</div>\n<div style=\"background: #f8fafc; padding: 24px 30px; border: 1px solid #e2e8f0;\">\n<p>Estimado/a <strong>{{ $json.clientName }}</strong>,</p>\n<p>Le confirmamos que su consulta jurídica ha sido agendada exitosamente:</p>\n<table style=\"width: 100%; border-collapse: collapse; margin: 16px 0;\">\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">📅 Fecha y Hora</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.dateTime }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">📋 Asunto</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.meetingReason }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">👨‍⚖️ Abogado</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">Abg. Felipe Herrera</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">🎟️ Pase QR</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\"><code>{{ $json.voucherCode }}</code></td></tr>\n</table>\n<p style=\"padding: 12px; background: #fef3c7; border-radius: 8px; color: #92400e;\">⚠️ Le recordaremos antes de su cita. Conserve su código QR para el ingreso.</p>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | +56 9 8877 6655 | felipe.herrera@driminservices.cl</div>\n</div>",
+        "options": {
+          "attachments": "icsFile"
+        }
+      },
+      "name": "5. Email Cliente + Evento Outlook",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 200],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "hours",
+        "resume": "timeInterval"
+      },
+      "name": "6. Esperar 2h antes de Cita",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1100, 400]
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "felipe.herrera@driminservices.cl",
+        "subject": "=⏰ Recordatorio: Consulta jurídica en 2 horas - {{ $json.clientName || 'Cliente' }}",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #b45309, #d97706); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0;\">⏰ Recordatorio de Consulta Jurídica</h2>\n<p style=\"margin: 8px 0 0; opacity: 0.85;\">Su cita es en aproximadamente 2 horas</p>\n</div>\n<div style=\"background: #fffbeb; padding: 24px 30px; border: 1px solid #fde68a;\">\n<p>Estimado/a <strong>Abg. Felipe Herrera</strong>,</p>\n<p>Le recordamos que tiene una consulta jurídica agendada próximamente:</p>\n<ul>\n<li><strong>Cliente:</strong> {{ $json.clientName }}</li>\n<li><strong>Empresa:</strong> {{ $json.unitNumber }}</li>\n<li><strong>Asunto:</strong> {{ $json.meetingReason }}</li>\n<li><strong>Hora:</strong> {{ $json.dateTime }}</li>\n<li><strong>Pase QR:</strong> <code>{{ $json.voucherCode }}</code></li>\n</ul>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | Recordatorio Automático</div>\n</div>"
+      },
+      "name": "7. Email Recordatorio 2h",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1350, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Generar archivo ICS de CANCELACIÓN para Outlook\nconst data = $input.first().json;\nconst body = data.body || data;\n\nconst clientName = body.clientName || 'Cliente';\nconst appointmentId = body.appointmentId || 'N/A';\nconst adminEmail = body.adminEmail || 'felipe.herrera@driminservices.cl';\n\n// UID basado en el appointmentId para que Outlook lo reconozca\nconst uid = `drimin-cancel-${appointmentId}-${Date.now()}@driminservices.cl`;\nconst now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';\n\nconst icsContent = [\n  'BEGIN:VCALENDAR',\n  'VERSION:2.0',\n  'PRODID:-//Drimin Services SpA//Bot Autonomo v2.0//ES',\n  'CALSCALE:GREGORIAN',\n  'METHOD:CANCEL',\n  'BEGIN:VEVENT',\n  `UID:${uid}`,\n  `DTSTAMP:${now}`,\n  `DTSTART:${now}`,\n  `DTEND:${now}`,\n  `SUMMARY:CANCELADA - Consulta con ${clientName}`,\n  `DESCRIPTION:La consulta jurídica con ${clientName} ha sido cancelada por el cliente.`,\n  'ORGANIZER;CN=Abg. Felipe Herrera:mailto:felipe.herrera@driminservices.cl',\n  'STATUS:CANCELLED',\n  'PRIORITY:1',\n  'END:VEVENT',\n  'END:VCALENDAR'\n].join('\\r\\n');\n\nconst binaryData = Buffer.from(icsContent, 'utf-8');\n\nreturn [{\n  json: { ...body, icsCanceled: true },\n  binary: {\n    icsFile: {\n      data: binaryData.toString('base64'),\n      mimeType: 'text/calendar; method=CANCEL',\n      fileName: `cancelacion-drimin-${clientName.replace(/\\s+/g, '-').toLowerCase()}.ics`,\n      fileExtension: 'ics'\n    }\n  }\n}];"
+      },
+      "name": "8. Generar ICS Cancelación Outlook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 700]
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "felipe.herrera@driminservices.cl",
+        "subject": "=🚫 Cita Cancelada - {{ $json.clientName || 'Cliente' }} | Drimin Services",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #991b1b, #dc2626); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0;\">🚫 Consulta Jurídica Cancelada</h2>\n<p style=\"margin: 8px 0 0; opacity: 0.85;\">Un cliente ha cancelado su cita programada</p>\n</div>\n<div style=\"background: #fef2f2; padding: 24px 30px; border: 1px solid #fecaca;\">\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">👤 Cliente</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.clientName }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">🆔 ID Cita</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.appointmentId || 'N/A' }}</td></tr>\n</table>\n<p style=\"margin-top: 16px; padding: 12px; background: #fee2e2; border-radius: 8px; color: #991b1b;\">⚠️ El bloque horario ha sido liberado. Se adjunta .ics de cancelación para Outlook.</p>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | Sistema Autónomo</div>\n</div>",
+        "options": {
+          "attachments": "icsFile"
+        }
+      },
+      "name": "9. Email Admin - Cancelación + ICS",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 650],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "={{ $json.adminEmail || 'felipe.herrera@driminservices.cl' }}",
+        "subject": "=✅ Confirmación de Cancelación - Drimin Services",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #0f172a, #1e293b); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0; color: #fbbf24;\">✅ Su Cita ha sido Cancelada Exitosamente</h2>\n</div>\n<div style=\"background: #f8fafc; padding: 24px 30px; border: 1px solid #e2e8f0;\">\n<p>Estimado/a <strong>{{ $json.clientName }}</strong>,</p>\n<p>Le confirmamos que su consulta jurídica ha sido cancelada exitosamente. El bloque horario ha sido liberado.</p>\n<p>Si desea reagendar, contáctenos por WhatsApp o escríbanos a <a href=\"mailto:felipe.herrera@driminservices.cl\">felipe.herrera@driminservices.cl</a>.</p>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | +56 9 8877 6655</div>\n</div>"
+      },
+      "name": "10. Email Cliente - Cancelación",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 850],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body?.priority || $json.priority }}",
+              "value2": "Alta",
+              "operation": "equals"
+            }
+          ]
+        }
+      },
+      "name": "11. IF Prioridad Alta",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 1200]
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "felipe.herrera@driminservices.cl",
+        "ccEmail": "admin@driminservices.cl",
+        "subject": "=🚨🔴 URGENTE: {{ $json.body?.emailSubject || $json.emailSubject || 'Incidencia de Alta Prioridad' }} | Ticket {{ $json.body?.ticketId || $json.ticketId }}",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #7f1d1d, #dc2626); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0;\">🚨🔴 INCIDENCIA LEGAL DE ALTA PRIORIDAD</h2>\n<p style=\"margin: 8px 0 0; opacity: 0.85;\">Requiere atención inmediata del Equipo Jurídico</p>\n</div>\n<div style=\"background: #fef2f2; padding: 24px 30px; border: 2px solid #dc2626;\">\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 10px; font-weight: bold; color: #991b1b; border-bottom: 1px solid #fecaca;\">🆔 Ticket ID</td><td style=\"padding: 10px; border-bottom: 1px solid #fecaca; font-weight: bold;\">{{ $json.body?.ticketId || $json.ticketId }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #991b1b; border-bottom: 1px solid #fecaca;\">👤 Cliente</td><td style=\"padding: 10px; border-bottom: 1px solid #fecaca;\">{{ $json.body?.clientName || $json.clientName }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #991b1b; border-bottom: 1px solid #fecaca;\">🏗️ Empresa / Faena</td><td style=\"padding: 10px; border-bottom: 1px solid #fecaca;\">{{ $json.body?.unitNumber || $json.unitNumber }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #991b1b; border-bottom: 1px solid #fecaca;\">⚠️ Prioridad</td><td style=\"padding: 10px; border-bottom: 1px solid #fecaca;\"><span style=\"background: #dc2626; color: #fff; padding: 4px 12px; border-radius: 12px; font-weight: bold;\">ALTA</span></td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #991b1b; border-bottom: 1px solid #fecaca;\">📝 Descripción</td><td style=\"padding: 10px; border-bottom: 1px solid #fecaca;\">{{ $json.body?.description || $json.description }}</td></tr>\n</table>\n<p style=\"margin-top: 16px; padding: 16px; background: #fce7e7; border-radius: 8px; color: #7f1d1d; font-weight: bold; text-align: center;\">⚡ ACCIÓN REQUERIDA: Fiscalización, sumario o urgencia regulatoria. Responder antes de 4 horas.</p>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | Sistema de Alertas Autónomo</div>\n</div>"
+      },
+      "name": "12. Email URGENTE - Incidencia Alta",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 1100],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "felipe.herrera@driminservices.cl",
+        "subject": "=📋 Nuevo Requerimiento Jurídico - {{ $json.body?.emailSubject || $json.emailSubject || 'Ticket' }} | {{ $json.body?.ticketId || $json.ticketId }}",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #0f172a, #1e293b); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0; color: #fbbf24;\">📋 Nuevo Requerimiento Jurídico</h2>\n<p style=\"margin: 8px 0 0; opacity: 0.85;\">Prioridad: Normal</p>\n</div>\n<div style=\"background: #f8fafc; padding: 24px 30px; border: 1px solid #e2e8f0;\">\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">🆔 Ticket ID</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.body?.ticketId || $json.ticketId }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">👤 Cliente</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.body?.clientName || $json.clientName }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">🏗️ Empresa</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.body?.unitNumber || $json.unitNumber }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">⚠️ Prioridad</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\"><span style=\"background: #2563eb; color: #fff; padding: 4px 12px; border-radius: 12px;\">Normal</span></td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #334155; border-bottom: 1px solid #e2e8f0;\">📝 Descripción</td><td style=\"padding: 10px; border-bottom: 1px solid #e2e8f0;\">{{ $json.body?.description || $json.description }}</td></tr>\n</table>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | Sistema de Tickets Autónomo</div>\n</div>"
+      },
+      "name": "13. Email Normal - Incidencia",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 1350],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "amount": 24,
+        "unit": "hours",
+        "resume": "timeInterval"
+      },
+      "name": "14. Esperar 24h Seguimiento",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1400, 1200]
+    },
+
+    {
+      "parameters": {
+        "url": "={{ 'http://localhost:3000/api/incidents' }}",
+        "options": {},
+        "method": "GET"
+      },
+      "name": "15. Consultar Estado Incidencia",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 1200]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "value2": "Resuelto",
+              "operation": "notEqual"
+            }
+          ]
+        }
+      },
+      "name": "16. IF No Resuelto",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1900, 1200]
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "felipe.herrera@driminservices.cl",
+        "ccEmail": "admin@driminservices.cl",
+        "subject": "=⏰🔔 ESCALAMIENTO: Ticket sin resolver a las 24h | {{ $json.body?.ticketId || $json.ticketId }}",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #b45309, #f59e0b); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0;\">⏰🔔 ESCALAMIENTO AUTOMÁTICO</h2>\n<p style=\"margin: 8px 0 0;\">Ticket con más de 24 horas sin resolución</p>\n</div>\n<div style=\"background: #fffbeb; padding: 24px 30px; border: 2px solid #f59e0b;\">\n<p><strong>Ticket ID:</strong> {{ $json.body?.ticketId || $json.ticketId }}</p>\n<p><strong>Cliente:</strong> {{ $json.body?.clientName || $json.clientName }}</p>\n<p><strong>Empresa:</strong> {{ $json.body?.unitNumber || $json.unitNumber }}</p>\n<p><strong>Descripción:</strong> {{ $json.body?.description || $json.description }}</p>\n<p style=\"padding: 16px; background: #fef3c7; border-radius: 8px; color: #92400e; font-weight: bold; text-align: center;\">⚡ Este requerimiento requiere atención prioritaria del equipo jurídico.</p>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | Escalamiento Autónomo 24h</div>\n</div>"
+      },
+      "name": "17. Email Escalamiento 24h",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2150, 1100],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "felipe.herrera@driminservices.cl",
+        "ccEmail": "admin@driminservices.cl, contacto@driminservices.cl",
+        "subject": "=💰 Comprobante de Pago Recibido - {{ $json.body?.clientName || $json.clientName }} | {{ $json.body?.amountStr || $json.amountStr }}",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #064e3b, #059669); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0;\">💰 Comprobante de Pago de Honorarios</h2>\n<p style=\"margin: 8px 0 0; opacity: 0.85;\">Drimin Services - Área de Finanzas</p>\n</div>\n<div style=\"background: #ecfdf5; padding: 24px 30px; border: 1px solid #a7f3d0;\">\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 10px; font-weight: bold; color: #065f46; border-bottom: 1px solid #a7f3d0;\">👤 Cliente</td><td style=\"padding: 10px; border-bottom: 1px solid #a7f3d0;\">{{ $json.body?.clientName || $json.clientName }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #065f46; border-bottom: 1px solid #a7f3d0;\">🏗️ Empresa</td><td style=\"padding: 10px; border-bottom: 1px solid #a7f3d0;\">{{ $json.body?.unitNumber || $json.unitNumber }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #065f46; border-bottom: 1px solid #a7f3d0;\">🏦 N° Operación</td><td style=\"padding: 10px; border-bottom: 1px solid #a7f3d0;\">{{ $json.body?.operationNumber || $json.operationNumber }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #065f46; border-bottom: 1px solid #a7f3d0;\">💵 Monto</td><td style=\"padding: 10px; border-bottom: 1px solid #a7f3d0; font-weight: bold; font-size: 18px; color: #059669;\">{{ $json.body?.amountStr || $json.amountStr }}</td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #065f46; border-bottom: 1px solid #a7f3d0;\">🧾 Código Recibo</td><td style=\"padding: 10px; border-bottom: 1px solid #a7f3d0;\"><code>{{ $json.body?.receiptCode || $json.receiptCode }}</code></td></tr>\n<tr><td style=\"padding: 10px; font-weight: bold; color: #065f46; border-bottom: 1px solid #a7f3d0;\">🎟️ Voucher QR</td><td style=\"padding: 10px; border-bottom: 1px solid #a7f3d0;\"><code>{{ $json.body?.voucherCode || $json.voucherCode }}</code></td></tr>\n</table>\n<p style=\"margin-top: 16px; padding: 12px; background: #d1fae5; border-radius: 8px; color: #065f46;\">✅ Pago verificado y registrado en el sistema.</p>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | RUT 76.543.210-9 | Banco de Chile Cta. 88-98765-02</div>\n</div>"
+      },
+      "name": "18. Email Admin - Pago Recibido",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [800, 1600],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "felipe.herrera@driminservices.cl",
+        "toEmail": "={{ $json.body?.adminEmail || $json.adminEmail || 'felipe.herrera@driminservices.cl' }}",
+        "subject": "=✅ Pago de Honorarios Verificado - Drimin Services | {{ $json.body?.receiptCode || $json.receiptCode }}",
+        "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<div style=\"background: linear-gradient(135deg, #0f172a, #1e293b); color: #fff; padding: 24px 30px; border-radius: 12px 12px 0 0;\">\n<h2 style=\"margin: 0; color: #fbbf24;\">✅ Su Pago ha sido Verificado</h2>\n<p style=\"margin: 8px 0 0; opacity: 0.85;\">Drimin Services SpA - Área de Finanzas</p>\n</div>\n<div style=\"background: #f8fafc; padding: 24px 30px; border: 1px solid #e2e8f0;\">\n<p>Estimado/a <strong>{{ $json.body?.clientName || $json.clientName }}</strong>,</p>\n<p>Confirmamos que su comprobante de pago ha sido recibido y verificado:</p>\n<ul>\n<li><strong>N° Operación:</strong> {{ $json.body?.operationNumber || $json.operationNumber }}</li>\n<li><strong>Monto:</strong> {{ $json.body?.amountStr || $json.amountStr }}</li>\n<li><strong>Código:</strong> <code>{{ $json.body?.voucherCode || $json.voucherCode }}</code></li>\n</ul>\n<p style=\"padding: 12px; background: #dbeafe; border-radius: 8px; color: #1e40af;\">Gracias por su pago. Estamos a su disposición.</p>\n</div>\n<div style=\"background: #0f172a; color: #94a3b8; padding: 16px 30px; border-radius: 0 0 12px 12px; font-size: 12px; text-align: center;\">Drimin Services SpA | +56 9 8877 6655 | felipe.herrera@driminservices.cl</div>\n</div>"
+      },
+      "name": "19. Email Cliente - Pago Verificado",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [800, 1800],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred-ferozo-drimin",
+          "name": "SMTP Ferozo Drimin Services"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "logMessage", "value": "={{ 'Evento: ' + ($json.body?.event || $json.event) + ' | Cliente: ' + ($json.body?.clientName || $json.clientName || 'N/A') + ' | ' + new Date().toISOString() }}" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "20. Log de Auditoría",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [500, 650]
+    }
+  ],
+
+  "connections": {
+    "1. Webhook Evento Drimin": {
+      "main": [
+        [
+          {
+            "node": "2. Router por Tipo de Evento",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "20. Log de Auditoría",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "2. Router por Tipo de Evento": {
+      "main": [
+        [
+          {
+            "node": "3. Generar ICS Calendario Outlook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "8. Generar ICS Cancelación Outlook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "11. IF Prioridad Alta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "18. Email Admin - Pago Recibido",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "19. Email Cliente - Pago Verificado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "3. Generar ICS Calendario Outlook": {
+      "main": [
+        [
+          {
+            "node": "4. Email Admin + Evento Outlook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "5. Email Cliente + Evento Outlook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "6. Esperar 2h antes de Cita",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "6. Esperar 2h antes de Cita": {
+      "main": [
+        [
+          {
+            "node": "7. Email Recordatorio 2h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "8. Generar ICS Cancelación Outlook": {
+      "main": [
+        [
+          {
+            "node": "9. Email Admin - Cancelación + ICS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "10. Email Cliente - Cancelación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "11. IF Prioridad Alta": {
+      "main": [
+        [
+          {
+            "node": "12. Email URGENTE - Incidencia Alta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "13. Email Normal - Incidencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "12. Email URGENTE - Incidencia Alta": {
+      "main": [
+        [
+          {
+            "node": "14. Esperar 24h Seguimiento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "13. Email Normal - Incidencia": {
+      "main": [
+        [
+          {
+            "node": "14. Esperar 24h Seguimiento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "14. Esperar 24h Seguimiento": {
+      "main": [
+        [
+          {
+            "node": "15. Consultar Estado Incidencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "15. Consultar Estado Incidencia": {
+      "main": [
+        [
+          {
+            "node": "16. IF No Resuelto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "16. IF No Resuelto": {
+      "main": [
+        [
+          {
+            "node": "17. Email Escalamiento 24h",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+
+  "staticData": null,
+  "tags": [
+    { "name": "Drimin Services" },
+    { "name": "Jurídico" },
+    { "name": "Ferozo" },
+    { "name": "Outlook" },
+    { "name": "Autónomo" }
+  ]
+}

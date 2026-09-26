@@ -1,4 +1,5 @@
 const { readDb, writeDb } = require('./db');
+const { dispatchDriminEvent } = require('./emailService');
 
 const INCIDENT_MENU_DRIMIN = [
   { id: 1, label: "Requerimiento en Derecho Minero (Concesiones, Amparos, Pedimentos)", keywords: ["minero", "mineria", "minería", "concesion", "concesión", "pedimento", "manifestacion"] },
@@ -133,29 +134,18 @@ async function processIncidentFlow({ message, history = [], clientName, unitNumb
   db.incidents.unshift(newIncident);
   writeDb(db);
 
-  const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-  if (n8nWebhookUrl) {
-    try {
-      await fetch(n8nWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'INCIDENT_REPORTED',
-          emailSubject,
-          ticketId,
-          condoName,
-          clientName: newIncident.clientName,
-          unitNumber: newIncident.unitNumber,
-          description: finalDescription,
-          priority: newIncident.priority,
-          adminEmail
-        })
-      });
-      console.log(`🚨 Evento de Incidencia Legal ${ticketId} despachado a n8n con asunto '${emailSubject}'!`);
-    } catch (e) {
-      console.error("Error enviando incidencia a n8n:", e.message);
-    }
-  }
+  // Despacho nativo de alerta por correo Ferozo + n8n opcional
+  dispatchDriminEvent({
+    event: 'INCIDENT_REPORTED',
+    emailSubject,
+    ticketId,
+    condoName,
+    clientName: newIncident.clientName,
+    unitNumber: newIncident.unitNumber,
+    description: finalDescription,
+    priority: newIncident.priority,
+    adminEmail
+  });
 
   const nameTag = clientName ? `@${clientName}` : 'Cliente';
   const unitTag = (unitNumber && unitNumber !== 'Empresa no especificada') ? ` (Empresa **${unitNumber}**)` : '';

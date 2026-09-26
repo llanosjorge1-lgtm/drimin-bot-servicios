@@ -11,6 +11,25 @@ let isConnected = false;
 let waSocket = null;
 
 const sessionHistories = new Map();
+const chatPauses = new Map(); // remoteJid -> timestamp hasta cuando está en pausa el bot
+
+function isChatPaused(remoteJid) {
+  const until = chatPauses.get(remoteJid);
+  if (!until) return false;
+  if (Date.now() > until) {
+    chatPauses.delete(remoteJid);
+    return false;
+  }
+  return true;
+}
+
+function pauseChat(remoteJid, durationMs = 2 * 60 * 60 * 1000) {
+  chatPauses.set(remoteJid, Date.now() + durationMs);
+}
+
+function unpauseChat(remoteJid) {
+  chatPauses.delete(remoteJid);
+}
 
 function getSessionHistory(sessionId) {
   if (!sessionHistories.has(sessionId)) {
@@ -153,7 +172,7 @@ async function connectToWhatsApp(forceClean = false) {
       if (m.type !== 'notify') return;
 
       for (const msg of m.messages) {
-        if (!msg.message || msg.key.fromMe) continue;
+        if (!msg.message) continue;
 
         const remoteJid = msg.key.remoteJid;
         if (!remoteJid || remoteJid.endsWith('@g.us')) continue;
@@ -163,12 +182,43 @@ async function connectToWhatsApp(forceClean = false) {
           msg.message.imageMessage?.caption ||
           '';
 
-        if (!textMessage.trim()) continue;
-
         const rawPhone = remoteJid.replace('@s.whatsapp.net', '');
         const senderPhone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
-        const pushName = msg.pushName || 'Cliente Drimin';
 
+        // 1. DETECCIÓN DE INTERVENCIÓN HUMANA (FELIPE ESCRIBE DESDE SU TELÉFONO)
+        if (msg.key.fromMe) {
+          const trimmed = textMessage.trim().toLowerCase();
+
+          // Comandos manuales para Felipe
+          if (trimmed === '#bot_on' || trimmed === '#activar') {
+            unpauseChat(remoteJid);
+            console.log(`🟢 [HumanTakeover] Felipe reactivó el bot para [${senderPhone}]`);
+            await waSocket.sendMessage(remoteJid, { text: '🤖 *[Asistente Drimin reactivado en este chat]*' });
+            continue;
+          }
+          if (trimmed === '#bot_off' || trimmed === '#pausar') {
+            pauseChat(remoteJid, 24 * 60 * 60 * 1000); // 24 horas
+            console.log(`🔴 [HumanTakeover] Felipe pausó el bot por 24h para [${senderPhone}]`);
+            await waSocket.sendMessage(remoteJid, { text: '👤 *[Asistente Drimin pausado por 24h en este chat]*' });
+            continue;
+          }
+
+          // Detección automática: si Felipe escribe cualquier mensaje en este chat,
+          // el bot se silencia automáticamente por 2 horas para no interrumpir
+          pauseChat(remoteJid, 2 * 60 * 60 * 1000);
+          console.log(`👤 [HumanTakeover] Felipe intervino en el chat con [${senderPhone}]. Bot silenciado automáticamente por 2 horas.`);
+          continue;
+        }
+
+        if (!textMessage.trim()) continue;
+
+        // 2. VERIFICACIÓN: SI EL CHAT ESTÁ EN PAUSA HUMANA, EL BOT NO RESPONDE
+        if (isChatPaused(remoteJid)) {
+          console.log(`🤫 [HumanTakeover] Mensaje de [${senderPhone}] recibido, pero omitido porque Felipe está atendiendo personalmente este chat.`);
+          continue;
+        }
+
+        const pushName = msg.pushName || 'Cliente Drimin';
         console.log(`📩 Mensaje entrante WhatsApp Drimin de [${senderPhone}] (${pushName}): "${textMessage}"`);
 
         const history = getSessionHistory(remoteJid);
@@ -234,5 +284,8 @@ async function resetWhatsAppConnection() {
 module.exports = {
   connectToWhatsApp,
   getWhatsAppStatus,
-  resetWhatsAppConnection
+  resetWhatsAppConnection,
+  isChatPaused,
+  pauseChat,
+  unpauseChat
 };
