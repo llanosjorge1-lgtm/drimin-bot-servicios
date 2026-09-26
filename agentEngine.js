@@ -378,11 +378,123 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
     };
   }
 
-  // 8. MANEJO DE SELECCIÓN DEL MENÚ (1 al 8)
-  const menuMatch = textRaw.match(/^([1-8])(?:\.|\b|$)/);
-  if (menuMatch) {
-    const selectedOption = parseInt(menuMatch[1], 10);
+  // 8. SI EL CLIENTE YA ESTÁ EN UN PASO ACTIVO DE CAPTACIÓN / AGENDAMIENTO, PROCESARLO PRIMERO
+  if (state.step && state.step !== 'initial' && state.step !== 'completed') {
+    // Paso 1: Identificar al cliente (Nombre y Empresa)
+    if (state.step === 'identifying_client') {
+      if (!state.clientName && extracted.name) state.clientName = extracted.name;
+      if (!state.company && extracted.company) state.company = extracted.company;
 
+      if (!state.clientName) {
+        let cand = textRaw.split(/\s+(?:de|empresa|minera)\b/i)[0].trim();
+        const candWords = cand.split(/\s+/);
+        if (candWords.length <= 4 && cand.length >= 3) {
+          state.clientName = cand;
+        } else {
+          state.clientName = textRaw;
+        }
+      }
+
+      if (!state.reason) {
+        state.step = 'asking_reason';
+        saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+        const displayName = state.clientName || 'amigo/a';
+        return {
+          reply: `Gracias, ${displayName}. ¿Podrías contarme brevemente sobre tu proyecto o la situación en la que necesitas apoyo?`,
+          toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+        };
+      } else {
+        state.step = 'asking_urgency_location';
+        saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+        return {
+          reply: `Gracias, ${state.clientName}. ¿Tu proyecto se encuentra en la Región de Antofagasta o en otra zona del país? ¿Se trata de una consulta urgente o de algo que estás planificando?`,
+          toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+        };
+      }
+    }
+
+    // Paso 2: Conocer el motivo de la consulta
+    if (state.step === 'asking_reason') {
+      state.reason = textRaw;
+      state.step = 'asking_urgency_location';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `¿Tu proyecto se encuentra en la Región de Antofagasta o en otra zona del país? ¿Se trata de una consulta urgente o de algo que estás planificando?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+
+    // Paso 3: Identificar urgencia y ubicación
+    if (state.step === 'asking_urgency_location') {
+      if (!state.location) state.location = extracted.location || textRaw;
+      if (!state.urgency) state.urgency = extracted.urgency || "Planificación";
+
+      state.step = 'offering_meeting';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `Creo que lo más conveniente es que podamos conversar con mayor detalle. ¿Te gustaría coordinar una reunión con nuestro equipo?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+
+    // Paso 4: Ofrecer una reunión (Confirmación de interés)
+    const isAffirmative = /^(?:si|sí|claro|por supuesto|me gustaria|me gustaría|perfecto|ok|dale|coordinemos|agendemos|bueno|de acuerdo|yes)$/i.test(textLower) ||
+      textLower.includes('me gustaría') || textLower.includes('me gustaria') || textLower.includes('quiero coordinar') || textLower.includes('coordinar');
+
+    if (state.step === 'offering_meeting' || (isAffirmative && (state.step === 'asking_urgency_location' || state.step === 'menu_presented'))) {
+      const businessDays = getNextBusinessDays(3);
+      const dayOptions = [];
+
+      for (const bDay of businessDays) {
+        const slots = await getAvailableSlots(bDay);
+        if (slots.length > 0) {
+          const slotsStr = slots.map(s => `${s.timeStr} hrs`).join(', ');
+          dayOptions.push(`• 📆 **${formatBusinessDate(bDay)}**: ${slotsStr}`);
+        }
+      }
+
+      state.step = 'selecting_slot_email';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+
+      const scheduleList = dayOptions.length > 0 
+        ? dayOptions.join('\n') 
+        : '• Bloques habituales: Lunes a viernes de 15:00 a 18:00 hrs';
+
+      return {
+        reply: `¡Excelente! Las reuniones disponibles para agendar son todos los días de la semana, de **lunes a viernes de 15:00 a 18:00 horas** (cada bloque de 1 hora).\n\n` +
+          `Para los próximos días hábiles contamos con las siguientes alternativas:\n` +
+          `${scheduleList}\n\n` +
+          `¿Qué día y horario te acomoda mejor? Y por favor, indícame tu **correo electrónico** para enviarte la invitación.`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+  }
+
+  // 9. MANEJO DE SELECCIÓN DEL MENÚ (POR NÚMERO 1..8 O POR NOMBRE DE SERVICIO)
+  const menuMatch = textRaw.match(/^([1-8])(?:\.|\b|$)/);
+  let selectedOption = menuMatch ? parseInt(menuMatch[1], 10) : null;
+
+  if (!selectedOption) {
+    if (textLower.includes('agendar') || textLower.includes('reunion') || textLower.includes('reunión') || textLower.includes('coordinar cita')) {
+      selectedOption = 7;
+    } else if (textLower.includes('derecho minero') || textLower.includes('concesion') || textLower.includes('concesión')) {
+      selectedOption = 1;
+    } else if (textLower.includes('compliance') || textLower.includes('delitos corporativos')) {
+      selectedOption = 2;
+    } else if (textLower.includes('eléctric') || textLower.includes('sec')) {
+      selectedOption = 3;
+    } else if (textLower.includes('prevención de riesgos') || textLower.includes('prevencion de riesgos') || textLower.includes('salud ocupacional')) {
+      selectedOption = 4;
+    } else if (textLower.includes('geología') || textLower.includes('geologia') || textLower.includes('proyectos mineros')) {
+      selectedOption = 5;
+    } else if (textLower.includes('gestión ambiental') || textLower.includes('gestion ambiental') || textLower.includes('sostenibilidad') || textLower.includes('esg')) {
+      selectedOption = 6;
+    } else if (textLower.includes('no sé qué servicio') || textLower.includes('no se que servicio')) {
+      selectedOption = 8;
+    }
+  }
+
+  if (selectedOption) {
     if (selectedOption === 1) {
       state.reason = "Derecho minero (concesiones, permisos o contratos)";
       state.step = 'identifying_client';
@@ -455,114 +567,7 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
     }
   }
 
-  // 9. MANEJO DE SITUACIONES MULTIDISCIPLINARIAS O EXPLICACIÓN DIRECTA DEL CLIENTE
-  const isMultidisciplinary = 
-    (textLower.includes('eléctric') || textLower.includes('sec')) && 
-    (textLower.includes('ambiental') || textLower.includes('minero') || textLower.includes('riesgos'));
 
-  if (isMultidisciplinary && state.step !== 'offering_meeting' && state.step !== 'selecting_slot_email') {
-    state.reason = textRaw;
-    state.step = 'offering_meeting';
-    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
-    return {
-      reply: `En Drimin Services contamos con respaldo técnico multidisciplinario precisamente para integrar áreas como ingeniería eléctrica SEC, gestión ambiental y cumplimiento normativo minero en una solución coordinada.\n\n` +
-        `Creo que lo más conveniente es que podamos conversar con mayor detalle. ¿Te gustaría coordinar una reunión con nuestro equipo?`,
-      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
-    };
-  }
-
-  // 10. FLUJO DE CAPTACIÓN PASO A PASO (UNA PREGUNTA A LA VEZ)
-  // Paso 1: Identificar al cliente (Nombre y Empresa)
-  if (state.step === 'identifying_client') {
-    if (!state.clientName && extracted.name) state.clientName = extracted.name;
-    if (!state.company && extracted.company) state.company = extracted.company;
-
-    if (!state.clientName) {
-      // Intentar extraer nombre del texto directamente
-      let cand = textRaw.split(/\s+(?:de|empresa|minera)\b/i)[0].trim();
-      const candWords = cand.split(/\s+/);
-      if (candWords.length <= 4 && cand.length >= 3) {
-        state.clientName = cand;
-      } else {
-        state.clientName = textRaw;
-      }
-    }
-
-    if (!state.reason) {
-      state.step = 'asking_reason';
-      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
-      const displayName = state.clientName || 'amigo/a';
-      return {
-        reply: `Gracias, ${displayName}. ¿Podrías contarme brevemente sobre tu proyecto o la situación en la que necesitas apoyo?`,
-        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
-      };
-    } else {
-      // Si ya teníamos el motivo (porque seleccionó una opción del menú)
-      state.step = 'asking_urgency_location';
-      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
-      return {
-        reply: `Gracias, ${state.clientName}. ¿Tu proyecto se encuentra en la Región de Antofagasta o en otra zona del país? ¿Se trata de una consulta urgente o de algo que estás planificando?`,
-        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
-      };
-    }
-  }
-
-  // Paso 2: Conocer el motivo de la consulta
-  if (state.step === 'asking_reason') {
-    state.reason = textRaw;
-    state.step = 'asking_urgency_location';
-    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
-    return {
-      reply: `¿Tu proyecto se encuentra en la Región de Antofagasta o en otra zona del país? ¿Se trata de una consulta urgente o de algo que estás planificando?`,
-      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
-    };
-  }
-
-  // Paso 3: Identificar urgencia y ubicación
-  if (state.step === 'asking_urgency_location') {
-    if (!state.location) state.location = extracted.location || textRaw;
-    if (!state.urgency) state.urgency = extracted.urgency || "Planificación";
-
-    state.step = 'offering_meeting';
-    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
-    return {
-      reply: `Creo que lo más conveniente es que podamos conversar con mayor detalle. ¿Te gustaría coordinar una reunión con nuestro equipo?`,
-      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
-    };
-  }
-
-  // Paso 4: Ofrecer una reunión (Confirmación de interés)
-  const isAffirmative = /^(?:si|sí|claro|por supuesto|me gustaria|me gustaría|perfecto|ok|dale|coordinemos|agendemos|bueno|de acuerdo|yes)$/i.test(textLower) ||
-    textLower.includes('me gustaría') || textLower.includes('me gustaria') || textLower.includes('quiero coordinar') || textLower.includes('coordinar');
-
-  if (state.step === 'offering_meeting' || (isAffirmative && (state.step === 'asking_urgency_location' || state.step === 'menu_presented'))) {
-    // Paso 5: Consultar disponibilidad y pedir correo
-    const businessDays = getNextBusinessDays(3);
-    const dayOptions = [];
-
-    for (const bDay of businessDays) {
-      const slots = await getAvailableSlots(bDay);
-      if (slots.length > 0) {
-        const slotsStr = slots.map(s => `${s.timeStr} hrs`).join(', ');
-        dayOptions.push(`• 📆 **${formatBusinessDate(bDay)}**: ${slotsStr}`);
-      }
-    }
-
-    state.step = 'selecting_slot_email';
-    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
-
-    const scheduleList = dayOptions.length > 0 
-      ? dayOptions.join('\n') 
-      : '• Bloques habituales: Lunes a viernes de 15:00 a 18:00 hrs';
-
-    return {
-      reply: `¡Excelente! Las reuniones disponibles para agendar son todos los días de la semana, de **lunes a viernes de 15:00 a 18:00 horas** (cada bloque de 1 hora).\n\n` +
-        `Para los próximos días hábiles contamos con las siguientes alternativas:\n` +
-        `${scheduleList}\n\n` +
-        `¿Qué día y horario te acomoda mejor? Y por favor, indícame tu **correo electrónico** para enviarte la invitación.`,
-      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
-    };
-  }
 
   // Paso 5: Confirmar disponibilidad y registrar reunión
   if (state.step === 'selecting_slot_email') {
@@ -693,7 +698,8 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
       summary: `Reunión Drimin: ${finalClientName}`,
       adminEmail: DRIMIN_CONFIG.companyEmail,
       clientEmail: state.clientEmail,
-      voucherCode: voucher.code
+      voucherCode: voucher.code,
+      qrCodeUrl: voucher.qrCodeDataUrl
     });
 
     // Actualizar estado a completado
@@ -705,8 +711,9 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
       `• **Modalidad**: Virtual (videollamada)\n` +
       `• **Correo registrado**: \`${state.clientEmail}\`\n` +
       `• **Motivo**: *${finalReason}*\n` +
+      `• **Pase Digital**: \`${voucher.code}\`\n` +
       `• **Contacto del equipo**: Drimin Services (+56 9 8877 6655 / ${DRIMIN_CONFIG.companyEmail})\n\n` +
-      `Hemos enviado los detalles y la invitación a tu correo electrónico. ¿Hay algo más en lo que te podamos ayudar hoy?`;
+      `🎟️ *A continuación te envío tu Pase Digital Oficial con Código QR.* También hemos enviado los detalles y la invitación con calendario (.ics) a tu correo electrónico. ¿Hay algo más en lo que te podamos orientar hoy?`;
 
     return {
       reply: confirmationReply,

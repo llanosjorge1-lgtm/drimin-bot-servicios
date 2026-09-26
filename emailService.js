@@ -106,7 +106,8 @@ async function notifyMeetingBooked(data) {
     summary = 'Consulta Jurídica Minera',
     adminEmail = 'felipe.herrera@driminservices.cl',
     voucherCode = 'N/A',
-    clientEmail = null
+    clientEmail = null,
+    qrCodeUrl = null
   } = data;
 
   const recipients = [adminEmail];
@@ -124,6 +125,15 @@ async function notifyMeetingBooked(data) {
     clientEmail: clientEmail
   });
 
+  const qrBlockHtml = qrCodeUrl ? `
+    <div style="text-align: center; margin: 25px 0; background: #ffffff; padding: 20px; border-radius: 8px; border: 1px dashed #0b2545;">
+      <h3 style="margin: 0 0 10px; color: #0b2545;">🎟️ Pase Digital Oficial con Código QR</h3>
+      <img src="cid:voucherqr" alt="Código QR Pase de Reunión" style="width: 220px; height: 220px; border-radius: 8px; display: block; margin: auto;" />
+      <p style="margin: 10px 0 0; font-family: monospace; font-size: 16px; font-weight: bold; color: #134074;">${voucherCode}</p>
+      <p style="margin: 4px 0 0; font-size: 12px; color: #64748b;">Conserva este código QR para el ingreso y validación de tu atención.</p>
+    </div>
+  ` : '';
+
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #dcdcdc; border-radius: 8px; overflow: hidden;">
       <div style="background-color: #0b2545; color: white; padding: 20px; text-align: center;">
@@ -140,8 +150,10 @@ async function notifyMeetingBooked(data) {
           <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">📆 Fecha y Hora:</td><td style="padding: 10px; border-bottom: 1px solid #eee; color: #0b2545; font-weight: bold;">${dateTime}</td></tr>
           <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">📋 Motivo / Asunto:</td><td style="padding: 10px; border-bottom: 1px solid #eee;">${meetingReason}</td></tr>
           <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">💻 Modalidad:</td><td style="padding: 10px; border-bottom: 1px solid #eee;">Virtual (Videollamada)</td></tr>
-          <tr><td style="padding: 10px; font-weight: bold;">🎟️ Código de Pase:</td><td style="padding: 10px;"><code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">${voucherCode}</code></td></tr>
+          <tr><td style="padding: 10px; font-weight: bold;">🎟️ Código de Pase:</td><td style="padding: 10px;"><code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${voucherCode}</code></td></tr>
         </table>
+
+        ${qrBlockHtml}
 
         <div style="background-color: #eef4f8; border-left: 4px solid #134074; padding: 12px; margin: 15px 0;">
           📌 <strong>Sincronización con Calendario:</strong> Se adjunta la invitación <code>cita_drimin.ics</code> compatible con Outlook, Google Calendar y Apple Calendar.
@@ -153,6 +165,27 @@ async function notifyMeetingBooked(data) {
     </div>
   `;
 
+  const mailAttachments = [
+    {
+      filename: 'cita_drimin.ics',
+      content: icsData,
+      contentType: 'text/calendar; charset=utf-8; method=REQUEST'
+    }
+  ];
+
+  if (qrCodeUrl) {
+    try {
+      const base64Data = qrCodeUrl.replace(/^data:image\/png;base64,/, '');
+      mailAttachments.push({
+        filename: `pase_qr_${voucherCode}.png`,
+        content: Buffer.from(base64Data, 'base64'),
+        cid: 'voucherqr'
+      });
+    } catch (e) {
+      console.error('Error adjuntando imagen QR a email:', e.message);
+    }
+  }
+
   return transporter.sendMail({
     from: `"Drimin Services" <${SMTP_CONFIG.auth.user}>`,
     to: recipients.join(', '),
@@ -163,13 +196,7 @@ async function notifyMeetingBooked(data) {
       method: 'REQUEST',
       content: icsData
     },
-    attachments: [
-      {
-        filename: 'cita_drimin.ics',
-        content: icsData,
-        contentType: 'text/calendar; charset=utf-8; method=REQUEST'
-      }
-    ]
+    attachments: mailAttachments
   });
 }
 

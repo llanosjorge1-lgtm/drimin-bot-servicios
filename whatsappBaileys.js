@@ -235,13 +235,18 @@ async function connectToWhatsApp(forceClean = false) {
           await waSocket.sendMessage(remoteJid, { text: result.reply }, { quoted: msg });
           console.log(`📤 Respuesta enviada por WhatsApp Drimin a [${senderPhone}]!`);
 
-          if (result.voucher && result.voucher.qrCodeDataUrl) {
+          const qrDataUrl = result.voucher?.qrCodeDataUrl || result.voucher?.qrDataUrl;
+          if (qrDataUrl) {
             try {
-              const base64Data = result.voucher.qrCodeDataUrl.replace(/^data:image\/png;base64,/, "");
+              const base64Data = qrDataUrl.replace(/^data:image\/png;base64,/, "");
               const buffer = Buffer.from(base64Data, 'base64');
               await waSocket.sendMessage(remoteJid, {
                 image: buffer,
-                caption: `🎟️ *Pase Digital de Consulta Minera Drimin Services*\nCódigo: *${result.voucher.code}*\nPresente este código QR al momento de su atención.`
+                caption: `🎟️ *Pase Digital Oficial de Reunión - Drimin Services SpA*\n` +
+                         `• Código: *${result.voucher.code}*\n` +
+                         `• Cliente: *${result.voucher.clientName}*\n` +
+                         `• Estado: *Confirmada*\n\n` +
+                         `Conserva este código QR para el ingreso y validación de tu atención.`
               }, { quoted: msg });
               console.log(`🖼️ Código QR enviado exitosamente a [${senderPhone}]!`);
             } catch (qrErr) {

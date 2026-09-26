@@ -42,20 +42,25 @@ async function createVoucher({
   const title = voucherType || 'Pase Digital de Consulta Minera Drimin Services';
   const benefit = discountOrAmount || 'Consulta Jurídica Especializada ($0)';
 
+  const qrPayload = `DRIMIN SERVICES SpA
+Pase Digital Oficial de Reunión
+Código: ${code}
+Cliente: ${clientName || 'Cliente'}
+Detalle: ${benefit}
+Modalidad: Virtual
+Contacto: +56 9 8877 6655
+Drimin Services - Soluciones Jurídicas & Técnicas`;
+
   let qrDataUrl = '';
   try {
-    qrDataUrl = await QRCode.toDataURL(JSON.stringify({
-      code,
-      id,
-      verifier: 'DRIMIN_LEGAL_PASS'
-    }), {
-      errorCorrectionLevel: 'H',
+    qrDataUrl = await QRCode.toDataURL(qrPayload, {
+      errorCorrectionLevel: 'M',
       color: {
-        dark: '#0f172a',
+        dark: '#0b2545',
         light: '#ffffff'
       },
       margin: 2,
-      width: 350
+      width: 400
     });
   } catch (err) {
     console.error('Error generando QR code:', err);
@@ -110,6 +115,7 @@ async function createVoucher({
     paymentConfirmedStamp: "✅ CONSULTA CONFIRMADA",
     legalDisclaimer: LEGAL_ANTI_FRAUD_DISCLAIMER,
     qrDataUrl,
+    qrCodeDataUrl: qrDataUrl,
     walletPassData,
     status: 'Activo',
     createdAt: new Date().toISOString()
