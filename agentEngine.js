@@ -11,10 +11,10 @@ const DRIMIN_CONFIG = {
   region: "Región de Antofagasta y Norte de Chile",
   role: "Asesor Virtual Drimin Services",
   greeting: `¡Hola! 👋 Bienvenido a Drimin Services.\n` +
-    `Soy el asesor virtual de nuestro equipo. Será un gusto orientarte.\n` +
-    `En Drimin Services ofrecemos soluciones jurídicas y técnicas para la industria minera del norte de Chile.\n` +
-    `Integramos derecho minero, compliance y experiencia técnica multidisciplinaria para acompañar a empresas en el desarrollo de sus proyectos, anticipar riesgos y enfrentar los desafíos regulatorios y operativos de la industria.\n` +
-    `¿Cuéntame, en qué podemos ayudarte hoy?`
+    `Soy el asesor virtual de nuestro equipo y será un gusto orientarte.\n\n` +
+    `En nuestro estudio ofrecemos soluciones jurídicas y técnicas integrales para toda la industria minera del norte de Chile. Acompañamos tanto a emprendedores individuales y pequeña minería, como a empresas de mediana y gran minería.\n\n` +
+    `Integramos derecho minero, compliance normativo y experiencia técnica multidisciplinaria para respaldar tus proyectos, anticipar riesgos y evitar eventuales irregularidades que pudieran derivar en sanciones o paralizaciones. 🏔️⚖️\n\n` +
+    `Para poder saludarte como corresponde, ¿me podrías indicar tu nombre y el nombre de tu empresa o faena, si corresponde?`
 };
 
 const SERVICES_MENU = `¡Por supuesto! 😊 No te preocupes, estoy aquí para ayudarte a encontrar la asesoría que necesitas.
@@ -334,7 +334,7 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
   const isFirstMessage = !history || history.length === 0 || (!state.step && isGreeting);
 
   if (isFirstMessage && isGreeting) {
-    state.step = 'initial';
+    state.step = 'identifying_client';
     saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
     return {
       reply: DRIMIN_CONFIG.greeting,
