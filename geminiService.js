@@ -3,20 +3,11 @@
  * Humaniza las respuestas y conversaciones legales del bot
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-let genAI = null;
-let model = null;
+const MODEL_NAME = 'gemini-3.5-flash-lite';
 
 if (GEMINI_API_KEY && GEMINI_API_KEY !== 'tu_clave_gemini_api' && GEMINI_API_KEY.length > 10) {
-  try {
-    genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    console.log('✨ [GeminiService] Motor Gemini 1.5 Flash inicializado con éxito para Drimin Services.');
-  } catch (err) {
-    console.error('⚠️ [GeminiService] Error al inicializar Gemini:', err.message);
-  }
+  console.log(`✨ [GeminiService] Motor Gemini (${MODEL_NAME}) configurado con éxito para Drimin Services.`);
 } else {
   console.log('ℹ️ [GeminiService] GEMINI_API_KEY pendiente de configurar en .env (usando motor base con fallback inteligente).');
 }
@@ -69,7 +60,8 @@ CIERRE:
  * Genera una respuesta humanizada con Gemini manteniendo el contexto
  */
 async function generateGeminiReply({ message, history = [], senderPhone, pushName, availableSlots = [] }) {
-  if (!model) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'tu_clave_gemini_api' || apiKey.length < 10) {
     return null; // Fallback al motor interno de reglas
   }
 
@@ -100,10 +92,31 @@ INSTRUCCIONES CLAVE PARA TU RESPUESTA:
 - No inventes horarios fuera de lunes a viernes 15:00 a 18:00 hrs.
 `;
 
-    const result = await model.generateContent(promptContext);
-    const response = await result.response;
-    const text = response.text();
-    return text.trim();
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000); // 7 segundos máx para velocidad
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptContext }] }]
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      console.warn(`[GeminiService] HTTP ${res.status}: ${res.statusText}`);
+      return null;
+    }
+
+    const data = await res.json();
+    if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+      return data.candidates[0].content.parts[0].text.trim();
+    }
+    return null;
   } catch (err) {
     console.error('⚠️ [GeminiService] Error al invocar Gemini API:', err.message);
     return null;
@@ -112,5 +125,8 @@ INSTRUCCIONES CLAVE PARA TU RESPUESTA:
 
 module.exports = {
   generateGeminiReply,
-  isGeminiConfigured: () => Boolean(model)
+  isGeminiConfigured: () => {
+    const key = process.env.GEMINI_API_KEY;
+    return Boolean(key && key !== 'tu_clave_gemini_api' && key.length > 10);
+  }
 };
