@@ -164,6 +164,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') sendChatMessage();
   });
 
+  document.querySelectorAll('.quick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const text = btn.getAttribute('data-text');
+      if (text && chatInput) {
+        chatInput.value = text;
+        sendChatMessage();
+      }
+    });
+  });
+
   // Cargar Citas
   async function loadAppointments() {
     try {

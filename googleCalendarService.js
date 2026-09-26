@@ -28,17 +28,9 @@ async function fetchGoogleCalendarBusySlots(targetDate) {
           const hour = parseInt(timeStr.slice(0, 2), 10);
           const minute = parseInt(timeStr.slice(2, 4), 10);
 
-          if (hour === 9 && minute === 0) busySlotIds.push(1);
-          else if (hour === 9 && minute === 30) busySlotIds.push(2);
-          else if (hour === 10 && minute === 0) busySlotIds.push(3);
-          else if (hour === 10 && minute === 30) busySlotIds.push(4);
-          else if (hour === 11 && minute === 30) busySlotIds.push(5);
-          else if (hour === 12 && minute === 0) busySlotIds.push(6);
-          else if (hour === 12 && minute === 30) busySlotIds.push(7);
-          else if (hour === 15 && minute === 0) busySlotIds.push(8);
-          else if (hour === 15 && minute === 30) busySlotIds.push(9);
-          else if (hour === 16 && minute === 0) busySlotIds.push(10);
-          else if (hour === 16 && minute === 30) busySlotIds.push(11);
+          if (hour === 15 && minute === 0) busySlotIds.push(1);
+          else if (hour === 16 && minute === 0) busySlotIds.push(2);
+          else if (hour === 17 && minute === 0) busySlotIds.push(3);
         }
       }
     }

@@ -1,35 +1,48 @@
-const { readDb, writeDb, getCompanyPaymentDetails, addPendingRequest } = require('./db');
+const { readDb, writeDb, getCompanyPaymentDetails, getConversationState, saveConversationState } = require('./db');
 const { createVoucher } = require('./voucherService');
 const { dispatchDriminEvent } = require('./emailService');
 const { generateGeminiReply } = require('./geminiService');
+const { fetchGoogleCalendarBusySlots } = require('./googleCalendarService');
 
 const DRIMIN_CONFIG = {
-  name: "Drimin Services - Servicios Jurídicos & Derecho Minero",
+  name: "Drimin Services - Soluciones Jurídicas & Técnicas para la Minería",
   companyEmail: "felipe.herrera@driminservices.cl",
   phone: "+56 9 8877 6655",
-  role: "Abg. Felipe Herrera / Asistente Virtual Drimin Services",
-  termCita: "Consulta Legal Especializada (Derecho Minero, Energía, Terrenos, Compliance)",
-  termCliente: "Cliente / Empresa",
-  quickPromptCita: "Agendar Consulta Jurídica (Derecho Minero, Energía, Terrenos Fiscales)",
-  quickPromptVoucher: "Reportar Requerimiento Jurídico / Consulta Urgente",
-  quickPromptPrecios: "Ver Especialidades Legales & Datos Bancarios",
-  services: [
-    { name: "Derecho Minero & Concesiones (Outlook Calendar)", duration: "1 hora", price: "Sin costo ($0)" },
-    { name: "Energía & Proyectos Eléctricos / Regulaciones", duration: "1 hora", price: "Sin costo ($0)" },
-    { name: "Terrenos Fiscales y Gestión Territorial (Bienes Nacionales)", duration: "1 hora", price: "Sin costo ($0)" },
-    { name: "Asesoría Legal a Empresas (Contratos & Sociedades)", duration: "1 hora", price: "Sin costo ($0)" },
-    { name: "Resolución de Controversias y Recuperación de Activos", duration: "1 hora", price: "Sin costo ($0)" },
-    { name: "Compliance y Corporativo (Modelos de Prevención)", duration: "1 hora", price: "Sin costo ($0)" }
-  ],
-  greeting: `¡Hola! Un gusto saludarte ⚖️📜 Te escribe el asistente virtual del **Abogado Felipe Herrera** en **Drimin Services SpA** (Servicios Jurídicos Especializados & Derecho Minero).\n\n` +
-    `¿En qué te podemos asesorar el día de hoy?\n\n` +
-    `• 1️⃣ **Coordinar una consulta jurídica** (Derecho Minero, Energía, Terrenos Fiscales, Empresas o Litigios)\n` +
-    `• 2️⃣ **Cancelar una cita previa**\n` +
-    `• 3️⃣ **Reprogramar una reunión**\n` +
-    `• 4️⃣ **Reporte de urgencia legal o fiscalización**\n` +
-    `• 5️⃣ **Datos bancarios oficiales**\n\n` +
-    `*(O si prefieres, cuéntame directamente qué necesitas y con gusto te oriento).*`
+  region: "Región de Antofagasta y Norte de Chile",
+  role: "Asesor Virtual Drimin Services",
+  greeting: `¡Hola! 👋 Bienvenido a Drimin Services.\n` +
+    `Soy el asesor virtual de nuestro equipo. Será un gusto orientarte.\n` +
+    `En Drimin Services ofrecemos soluciones jurídicas y técnicas para la industria minera del norte de Chile.\n` +
+    `Integramos derecho minero, compliance y experiencia técnica multidisciplinaria para acompañar a empresas en el desarrollo de sus proyectos, anticipar riesgos y enfrentar los desafíos regulatorios y operativos de la industria.\n` +
+    `¿Cuéntame, en qué podemos ayudarte hoy?`
 };
+
+const SERVICES_MENU = `¡Por supuesto! 😊 No te preocupes, estoy aquí para ayudarte a encontrar la asesoría que necesitas.
+En Drimin Services contamos con distintas áreas de especialización. Te comparto nuestros principales servicios para que puedas explorar el que más se acerque a tu situación:
+
+1. Derecho minero
+Concesiones mineras, permisos, contratos y asesoría legal para proyectos de exploración y explotación.
+
+2. Compliance y cumplimiento normativo
+Prevención de delitos corporativos, gestión de riesgos legales y programas de cumplimiento.
+
+3. Ingeniería y asesoría eléctrica SEC
+Apoyo técnico especializado en instalaciones eléctricas, seguridad y exigencias regulatorias.
+
+4. Prevención de riesgos
+Seguridad y salud ocupacional, asesoría preventiva y cumplimiento de exigencias laborales.
+
+5. Geología y proyectos mineros
+Apoyo geológico y orientación técnica durante las distintas etapas de los proyectos.
+
+6. Gestión ambiental y sostenibilidad
+Orientación en exigencias ambientales, criterios ESG y gestión de riesgos socioambientales.
+
+7. Agendar una reunión
+Coordinar una reunión con el equipo de Drimin Services para conversar sobre tu proyecto.
+
+8. No sé qué servicio necesito
+Cuéntanos brevemente tu situación y te ayudaremos a identificar el área adecuada.`;
 
 // BLOQUES OFICIALES DE REUNIÓN DE LUNES A VIERNES (1 HORA CADA UNO: 15:00 A 18:00 HRS)
 const MEETING_SLOTS = [
@@ -59,7 +72,7 @@ function formatBusinessDate(dateObj) {
   return `${dayOfWeek} ${dayNum} de ${monthName}`;
 }
 
-function getAvailableSlots(targetDate) {
+async function getAvailableSlots(targetDate) {
   const db = readDb();
   const appointments = db.appointments || [];
 
@@ -73,6 +86,7 @@ function getAvailableSlots(targetDate) {
 
   const bookedSlotIds = new Set();
 
+  // 1. Ocupados en base de datos local
   appointments.forEach(apt => {
     if (apt.status === 'Cancelada' || apt.status === 'Cancelada (Reprogramada)' || (apt.paymentStatus && apt.paymentStatus.includes('Cancelad'))) {
       return;
@@ -124,463 +138,609 @@ function getAvailableSlots(targetDate) {
     }
   });
 
+  // 2. Ocupados en Google Calendar conectado si existe
+  try {
+    const calendarBusy = await fetchGoogleCalendarBusySlots(targetDate);
+    if (Array.isArray(calendarBusy)) {
+      calendarBusy.forEach(id => bookedSlotIds.add(id));
+    }
+  } catch (cErr) {}
+
   return MEETING_SLOTS.filter(slot => !bookedSlotIds.has(slot.id));
 }
 
-async function executeTool(toolName, args) {
-  const db = readDb();
+// Extracción inteligente de entidades
+function extractEntities(text) {
+  const result = {};
 
-  if (toolName === 'agendar_cita') {
-    const { clientName, clientPhone, serviceType, dateTime, slotId, startIso, endIso, asunto, summary, unitNumber } = args;
+  // Email
+  const emailMatch = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b/);
+  if (emailMatch) {
+    result.email = emailMatch[0].trim();
+  }
 
+  // Nombre
+  const namePatterns = [
+    /(?:mi nombre es|me llamo|soy|atentamente|habla)\s+([A-Za-zÁéíóúñÁÉÍÓÚÑ]{2,}(?:\s+[A-Za-zÁéíóúñÁÉÍÓÚÑ]{2,})+)/i,
+    /(?:nombre:)\s*([A-Za-zÁéíóúñÁÉÍÓÚÑ]{2,}(?:\s+[A-Za-zÁéíóúñÁÉÍÓÚÑ]{2,})+)/i
+  ];
+  for (const pat of namePatterns) {
+    const m = text.match(pat);
+    if (m && m[1]) {
+      let cand = m[1].trim().split(/\s+(?:de\s+la|de|empresa|minera|y|para|en|asunto)\b/i)[0].trim();
+      const lower = cand.toLowerCase();
+      if (!lower.includes('hola') && !lower.includes('buenas') && !lower.includes('drimin') && !lower.includes('asesor')) {
+        result.name = cand;
+        break;
+      }
+    }
+  }
+
+  // Empresa
+  const companyPatterns = [
+    /(?:empresa|minera|compañía|compania|faena|de la empresa)\s*[:=]?\s*([A-Za-z0-9ÁéíóúñÁÉÍÓÚÑ\s.-]+?)(?=\s+y\s|\s+para|\s+en\s|\s+con\s|\s+asunto|$|,|\.)/i,
+    /(?:de\s+)(Minera\s+[A-Za-z0-9ÁéíóúñÁÉÍÓÚÑ]+)/i
+  ];
+  for (const pat of companyPatterns) {
+    const m = text.match(pat);
+    if (m && m[1] && m[1].trim().length > 2) {
+      result.company = m[1].trim();
+      break;
+    }
+  }
+
+  // Ubicación (Antofagasta / otra zona)
+  if (/antofagasta|calama|mejillones|tocopilla|san pedro/i.test(text)) {
+    result.location = "Región de Antofagasta";
+  } else if (/tarapacá|tarapaca|iquique|atacama|copiapó|copiapo|coquimbo|la serena|santiago|otra zona/i.test(text)) {
+    const locMatch = text.match(/(?:en\s+|de\s+)([A-Za-zÁéíóúñÁÉÍÓÚÑ\s]+)/i);
+    result.location = locMatch ? locMatch[1].trim() : "Otra zona del país";
+  }
+
+  // Urgencia
+  if (/urgente|urgencia|inmediato|cuanto antes|fiscalización|fiscalizacion|multa|plazo/i.test(text)) {
+    result.urgency = "Urgente";
+  } else if (/planificando|planificación|planificacion|mediano plazo|futuro|evaluando/i.test(text)) {
+    result.urgency = "Planificación";
+  }
+
+  return result;
+}
+
+async function processMessage({ message, history = [], senderPhone = null, pushName = null }) {
+  const textRaw = (message || '').trim();
+  const textLower = textRaw.toLowerCase();
+  const phone = senderPhone || '+56988776655';
+
+  // 1. MANEJO DE OPT-OUT (Baja de mensajes WhatsApp)
+  const isOptOut = /^(?:no me escriban|stop|baja|cancelar suscripcion|cancelar suscripción|no enviar mas mensajes|no quiero recibir mensajes)$/i.test(textLower);
+  if (isOptOut) {
+    saveConversationState(phone, { optOut: true, lastBotMessageAt: new Date().toISOString() });
+    return {
+      reply: `Entendido. Hemos registrado tu preferencia y no te enviaremos recordatorios ni mensajes automáticos por este canal. Si en el futuro necesitas asesoría de Drimin Services, siempre serás bienvenido. ¡Que tengas un excelente día! 👋`,
+      toolExecuted: null,
+      voucher: null,
+      industry: 'drimin',
+      greeting: DRIMIN_CONFIG.greeting
+    };
+  }
+
+  // 2. RECUPERAR ESTADO PREVIO DE LA CONVERSACIÓN
+  let state = getConversationState(phone) || {
+    step: null,
+    clientName: null,
+    company: null,
+    reason: null,
+    urgency: null,
+    location: null,
+    clientEmail: null,
+    followUpSent: false,
+    optOut: false
+  };
+
+  // Extraer entidades que el usuario pueda haber enviado en este mensaje
+  const extracted = extractEntities(textRaw);
+  if (extracted.name && !state.clientName) state.clientName = extracted.name;
+  if (extracted.company && !state.company) state.company = extracted.company;
+  if (extracted.email && !state.clientEmail) state.clientEmail = extracted.email;
+  if (extracted.location && !state.location) state.location = extracted.location;
+  if (extracted.urgency && !state.urgency) state.urgency = extracted.urgency;
+
+  if (!state.clientName && pushName && typeof pushName === 'string') {
+    const pClean = pushName.trim();
+    if (pClean && !pClean.toLowerCase().includes('user') && !pClean.toLowerCase().includes('whatsapp') && pClean.length >= 3) {
+      state.clientName = pClean;
+    }
+  }
+
+  // 3. DETECTAR CANCELACIÓN DE REUNIÓN
+  const isCancelRequest = textLower.includes('cancelar') && (textLower.includes('cita') || textLower.includes('reunión') || textLower.includes('reunion') || textLower.includes('hora'));
+  if (isCancelRequest) {
+    const db = readDb();
+    const appointments = db.appointments || [];
+    const activeIndex = appointments.findIndex(a => 
+      (a.clientPhone === phone || a.clientPhone === `+${phone}` || (state.clientName && a.clientName?.toLowerCase().includes(state.clientName.toLowerCase()))) &&
+      a.status !== 'Cancelada' && a.status !== 'Cancelada (Reprogramada)'
+    );
+
+    if (activeIndex !== -1) {
+      const apt = appointments[activeIndex];
+      apt.status = 'Cancelada';
+      apt.paymentStatus = 'Cancelada por el cliente';
+      writeDb(db);
+
+      dispatchDriminEvent({
+        event: 'MEETING_CANCELED',
+        clientName: apt.clientName,
+        appointmentId: apt.id,
+        adminEmail: DRIMIN_CONFIG.companyEmail
+      });
+
+      state.step = null;
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+
+      return {
+        reply: `🚫 Tu reunión agendada para el **${apt.dateTime}** ha sido cancelada exitosamente y el bloque de horario ha quedado liberado.\n\nSi necesitas coordinar un nuevo espacio en el futuro, no dudes en escribirnos. ¡Que tengas un excelente día! 👋`,
+        toolExecuted: { name: 'cancelar_cita', result: { canceledId: apt.id } },
+        voucher: null,
+        industry: 'drimin',
+        greeting: DRIMIN_CONFIG.greeting
+      };
+    } else {
+      return {
+        reply: `No encontré una reunión activa registrada a tu nombre para cancelar. Si deseas coordinar una nueva cita con nuestro equipo, con gusto te ayudo a agendarla. 😊`,
+        toolExecuted: null,
+        voucher: null,
+        industry: 'drimin',
+        greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+  }
+
+  // 4. DETECTAR REPROGRAMACIÓN
+  const isRescheduleRequest = textLower.includes('reprogramar') || textLower.includes('cambiar fecha') || textLower.includes('cambiar hora') || textLower.includes('modificar cita');
+  if (isRescheduleRequest) {
+    const db = readDb();
+    const appointments = db.appointments || [];
+    const active = appointments.find(a => 
+      (a.clientPhone === phone || a.clientPhone === `+${phone}`) &&
+      a.status !== 'Cancelada' && a.status !== 'Cancelada (Reprogramada)'
+    );
+    if (active) {
+      active.status = 'Cancelada (Reprogramada)';
+      writeDb(db);
+    }
+    state.step = 'offering_meeting';
+  }
+
+  // 5. DETECCIÓN DE DATOS BANCARIOS OFICIALES
+  if (textLower.includes('datos bancarios') || textLower.includes('cuenta corriente') || textLower.includes('transferencia')) {
+    const bankInfo = getCompanyPaymentDetails('drimin');
+    const replyText = `🏦 **Datos Bancarios Oficiales - Drimin Services SpA**\n\n` +
+      `• Titular: *${bankInfo.holderName}*\n` +
+      `• RUT: *${bankInfo.rut}*\n` +
+      `• Banco: *${bankInfo.bankName}*\n` +
+      `• Tipo de Cuenta: *${bankInfo.accountType}*\n` +
+      `• N° de Cuenta: *${bankInfo.accountNumber}*\n` +
+      `• Correo de Comprobantes: \`${bankInfo.emailNotification}\`\n\n` +
+      `📌 *${bankInfo.instructions}*`;
+
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+    return { reply: replyText, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
+  }
+
+  // 6. DETECCIÓN DE MENSAJE INICIAL / SALUDO PURAMENTE INICIAL
+  const isGreeting = /^(?:hola|buenos dias|buenos días|buenas tardes|buenas noches|buenas|hola drimin|hola asesor|iniciar|comenzar|menu|menú)$/i.test(textLower);
+  const isFirstMessage = !history || history.length === 0 || (!state.step && isGreeting);
+
+  if (isFirstMessage && isGreeting) {
+    state.step = 'initial';
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+    return {
+      reply: DRIMIN_CONFIG.greeting,
+      toolExecuted: null,
+      voucher: null,
+      industry: 'drimin',
+      greeting: DRIMIN_CONFIG.greeting
+    };
+  }
+
+  // 7. SI EL CLIENTE NO SABE QUÉ NECESITA O PIDE CONOCER SERVICIOS
+  const isUnsureOrWantsServices = 
+    textLower.includes('no estoy seguro') ||
+    textLower.includes('no estoy segura') ||
+    textLower.includes('quiero conocer sus servicios') ||
+    textLower.includes('necesito asesoría, pero no sé por dónde empezar') ||
+    textLower.includes('necesito asesoria, pero no se por donde empezar') ||
+    textLower.includes('no sé por dónde empezar') ||
+    textLower.includes('no se por donde empezar') ||
+    textLower.includes('conocer sus servicios') ||
+    textLower.includes('cuales son sus servicios') ||
+    textLower.includes('cuáles son sus servicios') ||
+    textLower.includes('que servicios ofrecen') ||
+    textLower.includes('qué servicios ofrecen') ||
+    textLower.includes('qué hacen') ||
+    textLower.includes('que hacen') ||
+    textLower.includes('ver servicios') ||
+    textLower.includes('mostrar servicios') ||
+    textLower.includes('no tengo claro') ||
+    (state.step === 'initial' && (textLower === 'no sé' || textLower === 'no se' || textLower.includes('dudas')));
+
+  if (isUnsureOrWantsServices) {
+    state.step = 'menu_presented';
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+    return {
+      reply: SERVICES_MENU,
+      toolExecuted: null,
+      voucher: null,
+      industry: 'drimin',
+      greeting: DRIMIN_CONFIG.greeting
+    };
+  }
+
+  // 8. MANEJO DE SELECCIÓN DEL MENÚ (1 al 8)
+  const menuMatch = textRaw.match(/^([1-8])(?:\.|\b|$)/);
+  if (menuMatch) {
+    const selectedOption = parseInt(menuMatch[1], 10);
+
+    if (selectedOption === 1) {
+      state.reason = "Derecho minero (concesiones, permisos o contratos)";
+      state.step = 'identifying_client';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `En Drimin Services contamos con sólida trayectoria en **Derecho minero**: concesiones mineras, permisos, contratos y asesoría legal estratégica para proyectos de exploración y explotación en el norte de Chile.\n\n` +
+          `¡Encantado! ¿Me podrías indicar tu nombre y el nombre de tu empresa, si corresponde?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    } else if (selectedOption === 2) {
+      state.reason = "Compliance y cumplimiento normativo minero";
+      state.step = 'identifying_client';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `En **Compliance y cumplimiento normativo** apoyamos a empresas en prevención de delitos corporativos (Ley 20.393/21.595), gestión de riesgos legales y diseño de programas de cumplimiento normativo.\n\n` +
+          `¡Encantado! ¿Me podrías indicar tu nombre y el nombre de tu empresa, si corresponde?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    } else if (selectedOption === 3) {
+      state.reason = "Ingeniería y asesoría eléctrica SEC";
+      state.step = 'identifying_client';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `En **Ingeniería y asesoría eléctrica SEC** entregamos apoyo técnico especializado en instalaciones eléctricas mineras, seguridad de infraestructura y cumplimiento de exigencias regulatorias ante la SEC.\n\n` +
+          `¡Encantado! ¿Me podrías indicar tu nombre y el nombre de tu empresa, si corresponde?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    } else if (selectedOption === 4) {
+      state.reason = "Prevención de riesgos y seguridad laboral";
+      state.step = 'identifying_client';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `En **Prevención de riesgos** acompañamos a faenas en seguridad y salud ocupacional, asesoría preventiva, auditorías y cumplimiento de exigencias del Sernageomin y normativa laboral.\n\n` +
+          `¡Encantado! ¿Me podrías indicar tu nombre y el nombre de tu empresa, si corresponde?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    } else if (selectedOption === 5) {
+      state.reason = "Geología y proyectos mineros";
+      state.step = 'identifying_client';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `En **Geología y proyectos mineros** brindamos apoyo geológico especializado y orientación técnica multidisciplinaria durante las distintas etapas de exploración y desarrollo de faenas.\n\n` +
+          `¡Encantado! ¿Me podrías indicar tu nombre y el nombre de tu empresa, si corresponde?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    } else if (selectedOption === 6) {
+      state.reason = "Gestión ambiental y sostenibilidad";
+      state.step = 'identifying_client';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `En **Gestión ambiental y sostenibilidad** orientamos en exigencias ambientales del SEIA y SMA, criterios ESG y gestión de riesgos socioambientales en el norte del país.\n\n` +
+          `¡Encantado! ¿Me podrías indicar tu nombre y el nombre de tu empresa, si corresponde?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    } else if (selectedOption === 7) {
+      state.step = 'identifying_client';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `¡Por supuesto! Será un gusto coordinar una reunión con nuestro equipo profesional para conversar sobre tu proyecto.\n\n` +
+          `¡Encantado! ¿Me podrías indicar tu nombre y el nombre de tu empresa, si corresponde?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    } else if (selectedOption === 8) {
+      state.step = 'asking_reason';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `No te preocupes, estamos aquí para orientarte. 😊\n\nCuéntanos brevemente tu situación o qué desafío estás enfrentando, y te ayudaremos a identificar el área adecuada.`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+  }
+
+  // 9. MANEJO DE SITUACIONES MULTIDISCIPLINARIAS O EXPLICACIÓN DIRECTA DEL CLIENTE
+  const isMultidisciplinary = 
+    (textLower.includes('eléctric') || textLower.includes('sec')) && 
+    (textLower.includes('ambiental') || textLower.includes('minero') || textLower.includes('riesgos'));
+
+  if (isMultidisciplinary && state.step !== 'offering_meeting' && state.step !== 'selecting_slot_email') {
+    state.reason = textRaw;
+    state.step = 'offering_meeting';
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+    return {
+      reply: `En Drimin Services contamos con respaldo técnico multidisciplinario precisamente para integrar áreas como ingeniería eléctrica SEC, gestión ambiental y cumplimiento normativo minero en una solución coordinada.\n\n` +
+        `Creo que lo más conveniente es que podamos conversar con mayor detalle. ¿Te gustaría coordinar una reunión con nuestro equipo?`,
+      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+    };
+  }
+
+  // 10. FLUJO DE CAPTACIÓN PASO A PASO (UNA PREGUNTA A LA VEZ)
+  // Paso 1: Identificar al cliente (Nombre y Empresa)
+  if (state.step === 'identifying_client') {
+    if (!state.clientName && extracted.name) state.clientName = extracted.name;
+    if (!state.company && extracted.company) state.company = extracted.company;
+
+    if (!state.clientName) {
+      // Intentar extraer nombre del texto directamente
+      let cand = textRaw.split(/\s+(?:de|empresa|minera)\b/i)[0].trim();
+      const candWords = cand.split(/\s+/);
+      if (candWords.length <= 4 && cand.length >= 3) {
+        state.clientName = cand;
+      } else {
+        state.clientName = textRaw;
+      }
+    }
+
+    if (!state.reason) {
+      state.step = 'asking_reason';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      const displayName = state.clientName || 'amigo/a';
+      return {
+        reply: `Gracias, ${displayName}. ¿Podrías contarme brevemente sobre tu proyecto o la situación en la que necesitas apoyo?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    } else {
+      // Si ya teníamos el motivo (porque seleccionó una opción del menú)
+      state.step = 'asking_urgency_location';
+      saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+      return {
+        reply: `Gracias, ${state.clientName}. ¿Tu proyecto se encuentra en la Región de Antofagasta o en otra zona del país? ¿Se trata de una consulta urgente o de algo que estás planificando?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+  }
+
+  // Paso 2: Conocer el motivo de la consulta
+  if (state.step === 'asking_reason') {
+    state.reason = textRaw;
+    state.step = 'asking_urgency_location';
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+    return {
+      reply: `¿Tu proyecto se encuentra en la Región de Antofagasta o en otra zona del país? ¿Se trata de una consulta urgente o de algo que estás planificando?`,
+      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+    };
+  }
+
+  // Paso 3: Identificar urgencia y ubicación
+  if (state.step === 'asking_urgency_location') {
+    if (!state.location) state.location = extracted.location || textRaw;
+    if (!state.urgency) state.urgency = extracted.urgency || "Planificación";
+
+    state.step = 'offering_meeting';
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+    return {
+      reply: `Creo que lo más conveniente es que podamos conversar con mayor detalle. ¿Te gustaría coordinar una reunión con nuestro equipo?`,
+      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+    };
+  }
+
+  // Paso 4: Ofrecer una reunión (Confirmación de interés)
+  const isAffirmative = /^(?:si|sí|claro|por supuesto|me gustaria|me gustaría|perfecto|ok|dale|coordinemos|agendemos|bueno|de acuerdo|yes)$/i.test(textLower) ||
+    textLower.includes('me gustaría') || textLower.includes('me gustaria') || textLower.includes('quiero coordinar') || textLower.includes('coordinar');
+
+  if (state.step === 'offering_meeting' || (isAffirmative && (state.step === 'asking_urgency_location' || state.step === 'menu_presented'))) {
+    // Paso 5: Consultar disponibilidad y pedir correo
+    const businessDays = getNextBusinessDays(3);
+    const dayOptions = [];
+
+    for (const bDay of businessDays) {
+      const slots = await getAvailableSlots(bDay);
+      if (slots.length > 0) {
+        const slotsStr = slots.map(s => `${s.timeStr} hrs`).join(', ');
+        dayOptions.push(`• 📆 **${formatBusinessDate(bDay)}**: ${slotsStr}`);
+      }
+    }
+
+    state.step = 'selecting_slot_email';
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+
+    const scheduleList = dayOptions.length > 0 
+      ? dayOptions.join('\n') 
+      : '• Bloques habituales: Lunes a viernes de 15:00 a 18:00 hrs';
+
+    return {
+      reply: `¡Excelente! Las reuniones disponibles para agendar son todos los días de la semana, de **lunes a viernes de 15:00 a 18:00 horas** (cada bloque de 1 hora).\n\n` +
+        `Para los próximos días hábiles contamos con las siguientes alternativas:\n` +
+        `${scheduleList}\n\n` +
+        `¿Qué día y horario te acomoda mejor? Y por favor, indícame tu **correo electrónico** para enviarte la invitación.`,
+      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+    };
+  }
+
+  // Paso 5: Confirmar disponibilidad y registrar reunión
+  if (state.step === 'selecting_slot_email') {
+    const businessDays = getNextBusinessDays(5);
+    let chosenDate = businessDays[0];
+    let matchedDay = false;
+
+    // Detectar día elegido
+    for (const bDay of businessDays) {
+      const dayNames = ["domingo", "lunes", "martes", "miércoles", "miercoles", "jueves", "viernes", "sábado"];
+      const bDayName = dayNames[bDay.getDay()];
+      if (textLower.includes(bDayName) || (bDayName === 'miércoles' && textLower.includes('miercoles'))) {
+        chosenDate = bDay;
+        matchedDay = true;
+        break;
+      }
+      const dayNumStr = String(bDay.getDate());
+      const regexDayNum = new RegExp(`(?:el|día|dia|de|para)?\\s*\\b${dayNumStr}\\b`);
+      if (regexDayNum.test(textLower)) {
+        chosenDate = bDay;
+        matchedDay = true;
+        break;
+      }
+    }
+
+    // Detectar bloque elegido (15:00 a 16:00, 16:00 a 17:00, 17:00 a 18:00)
+    let chosenSlot = null;
+    if (textLower.includes('15:00') || textLower.includes('15 a 16') || textLower.includes('a las 15') || textLower.includes('3 pm') || textLower.includes('3 a 4') || textLower.includes('bloque 1')) {
+      chosenSlot = MEETING_SLOTS[0];
+    } else if (textLower.includes('16:00') || textLower.includes('16 a 17') || textLower.includes('a las 16') || textLower.includes('4 pm') || textLower.includes('4 a 5') || textLower.includes('bloque 2')) {
+      chosenSlot = MEETING_SLOTS[1];
+    } else if (textLower.includes('17:00') || textLower.includes('17 a 18') || textLower.includes('a las 17') || textLower.includes('5 pm') || textLower.includes('5 a 6') || textLower.includes('bloque 3')) {
+      chosenSlot = MEETING_SLOTS[2];
+    }
+
+    // Correo electrónico
+    if (extracted.email) {
+      state.clientEmail = extracted.email;
+    }
+
+    // Si aún no indica el correo
+    if (!state.clientEmail) {
+      return {
+        reply: `Muchas gracias. Para coordinar la reunión y enviarte el enlace de conexión, por favor indícame tu **correo electrónico**.`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+
+    // Si aún no indica el bloque
+    if (!chosenSlot) {
+      const avail = await getAvailableSlots(chosenDate);
+      const availList = avail.map(s => `• **${s.label}**`).join('\n');
+      return {
+        reply: `Por favor confírmame cuál de los bloques disponibles prefieres para el **${formatBusinessDate(chosenDate)}**:\n\n${availList}`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+
+    // Validar disponibilidad real del bloque
+    const availableSlots = await getAvailableSlots(chosenDate);
+    const isSlotAvailable = availableSlots.some(s => s.id === chosenSlot.id);
+
+    if (!isSlotAvailable) {
+      const otherSlots = availableSlots.map(s => `• **${s.label}**`).join('\n');
+      return {
+        reply: `El bloque de **${chosenSlot.label}** para el **${formatBusinessDate(chosenDate)}** acaba de ser reservado.\n\nContamos con estos otros horarios disponibles para ese día:\n${otherSlots}\n\n¿Cuál de ellos te acomodaría?`,
+        toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+      };
+    }
+
+    // CREACIÓN Y CONFIRMACIÓN DE LA REUNIÓN
+    const finalClientName = state.clientName || 'Cliente';
+    const finalCompany = state.company || 'Empresa no especificada';
+    const finalReason = state.reason || 'Consulta Jurídica / Técnica Especializada';
+    const targetFormatted = formatBusinessDate(chosenDate);
+
+    const year = chosenDate.getFullYear();
+    const month = String(chosenDate.getMonth() + 1).padStart(2, '0');
+    const day = String(chosenDate.getDate()).padStart(2, '0');
+    const hStr = String(chosenSlot.hour).padStart(2, '0');
+    const mStr = String(chosenSlot.minute).padStart(2, '0');
+    const startIso = `${year}-${month}-${day}T${hStr}:${mStr}:00-03:00`;
+
+    const endHour = chosenSlot.hour + 1;
+    const endHStr = String(endHour).padStart(2, '0');
+    const endIso = `${year}-${month}-${day}T${endHStr}:${mStr}:00-03:00`;
+
+    const db = readDb();
     const newAppointment = {
       id: `apt-${Date.now()}`,
-      clientName: clientName || DRIMIN_CONFIG.termCliente,
-      clientPhone: clientPhone || '+56988776655',
-      unitNumber: unitNumber || 'Empresa no especificada',
-      asunto: asunto || summary || `Consulta Minera: ${clientName || 'Cliente'}`,
-      summary: summary || asunto || `Consulta Minera: ${clientName || 'Cliente'}`,
-      industry: 'drimin',
-      serviceType: serviceType || "Consulta Legal Drimin Services",
-      propertyAddress: "Drimin Services SpA",
-      dateTime: dateTime || new Date(Date.now() + 86400000).toISOString(),
-      slotId: slotId || null,
-      startIso: startIso || null,
-      endIso: endIso || null,
-      nightsCount: 0,
-      pricePerNight: 0,
-      subtotal: 0,
-      ivaOrFee: 0,
-      totalAmount: 0,
-      paymentStatus: 'Confirmada (Gratuita)',
+      clientName: finalClientName,
+      clientPhone: phone,
+      clientEmail: state.clientEmail,
+      unitNumber: finalCompany,
+      asunto: finalReason,
+      summary: `Consulta Drimin: ${finalClientName} (${finalCompany})`,
+      serviceType: finalReason,
+      propertyAddress: "Drimin Services SpA - Modalidad Virtual",
+      dateTime: `${targetFormatted} (${chosenSlot.label})`,
+      slotId: chosenSlot.id,
+      startIso,
+      endIso,
       status: 'Confirmada',
       createdAt: new Date().toISOString()
     };
     db.appointments.unshift(newAppointment);
     writeDb(db);
 
+    // Voucher y QR
+    const voucher = await createVoucher({
+      clientName: `${finalClientName} (${finalCompany})`,
+      clientPhone: phone,
+      industry: 'drimin',
+      voucherType: `Pase de Reunión Drimin Services`,
+      discountOrAmount: `${finalReason} | ${targetFormatted} ${chosenSlot.label}`,
+      propertyAddress: "Drimin Services - Modalidad Virtual"
+    });
+
+    // Despacho de Correo y Calendario (.ics)
+    dispatchDriminEvent({
+      event: 'MEETING_BOOKED',
+      clientName: finalClientName,
+      unitNumber: finalCompany,
+      meetingReason: finalReason,
+      dateTime: `${targetFormatted} (${chosenSlot.label})`,
+      startIso,
+      endIso,
+      summary: `Reunión Drimin: ${finalClientName}`,
+      adminEmail: DRIMIN_CONFIG.companyEmail,
+      clientEmail: state.clientEmail,
+      voucherCode: voucher.code
+    });
+
+    // Actualizar estado a completado
+    state.step = 'completed';
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
+
+    const confirmationReply = `¡Excelente, ${finalClientName}! Tu reunión ha sido confirmada con éxito. 📅\n\n` +
+      `• **Fecha y hora**: ${targetFormatted}, ${chosenSlot.label}\n` +
+      `• **Modalidad**: Virtual (videollamada)\n` +
+      `• **Correo registrado**: \`${state.clientEmail}\`\n` +
+      `• **Motivo**: *${finalReason}*\n` +
+      `• **Contacto del equipo**: Drimin Services (+56 9 8877 6655 / ${DRIMIN_CONFIG.companyEmail})\n\n` +
+      `Hemos enviado los detalles y la invitación a tu correo electrónico. ¿Hay algo más en lo que te podamos ayudar hoy?`;
+
     return {
-      success: true,
-      message: `Consulta legal registrada exitosamente para ${newAppointment.clientName} en ${newAppointment.serviceType}. Estado: Confirmada. ID: ${newAppointment.id}`,
-      appointment: newAppointment
+      reply: confirmationReply,
+      toolExecuted: { name: 'agendar_cita', result: newAppointment },
+      voucher,
+      industry: 'drimin',
+      greeting: DRIMIN_CONFIG.greeting
     };
   }
 
-  return { success: false, message: "Herramienta desconocida" };
-}
-
-async function processMessage({ message, history = [], senderPhone = null, pushName = null }) {
-  const textLower = message.toLowerCase();
-  const condoName = "Drimin Services - Derecho Minero & Soluciones Industriales";
-  const adminEmail = "felipe.herrera@driminservices.cl";
-  const brandEmoji = "⛏️📜";
-
-  const userMessagesText = history ? history.filter(h => h.role === 'user').map(h => h.content).join(' ') : '';
-  const userCombinedText = `${userMessagesText} ${message}`;
-
-  let residentPhone = senderPhone || '+56988776655';
-  if (residentPhone && !residentPhone.startsWith('+') && /^\d+$/.test(residentPhone)) {
-    residentPhone = '+' + residentPhone;
+  // 11. LIMITES DE ASESORÍA / OPINIONES JURÍDICAS DEFINITIVAS
+  const isSeekingLegalVerdict = textLower.includes('garantizan') || textLower.includes('aseguran') || textLower.includes('puedo hacerlo ya') || textLower.includes('es 100% seguro');
+  if (isSeekingLegalVerdict) {
+    return {
+      reply: `En Drimin Services no emitimos opiniones jurídicas definitivas ni garantizamos resultados regulatorios o de concesiones sin un análisis exhaustivo previo. Cada proyecto minero presenta particularidades normativas y técnicas únicas.\n\n` +
+        `Por ello, lo más recomendable es revisar los antecedentes directamente con nuestros abogados y especialistas en una reunión formal. ¿Te gustaría que coordinemos una reunión con nuestro equipo?`,
+      toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting
+    };
   }
 
-  let clientName = null;
-  const nameMatch = userCombinedText.match(/(?:mi nombre es|nombre es|soy|me llamo)\s+([A-Za-zÁéíóúñÁÉÍÓÚÑ]{2,}(?:\s+[A-Za-zÁéíóúñÁÉÍÓÚÑ]{2,})+)/i) ||
-                    userCombinedText.match(/\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,})\b/);
+  // 12. RESPUESTA INTELIGENTE CON GEMINI (SI ESTÁ HABILITADO)
+  const businessDays = getNextBusinessDays(3);
+  const slotsForGemini = await getAvailableSlots(businessDays[0]);
 
-  if (nameMatch && nameMatch[1]) {
-    let candidate = nameMatch[1].trim();
-    // Truncar candidate en palabras clave de parada (de, empresa, asunto, para, el, la, quiero, bloque, depto)
-    candidate = candidate.split(/\s+(?:de\s+empresa|de|empresa|asunto|para|quiero|el|la|bloque|depto|unidad)\b/i)[0].trim();
-    const candWords = candidate.split(/\s+/);
-    if (candWords.length > 3) candidate = candWords.slice(0, 3).join(' ');
-
-    const candLower = candidate.toLowerCase();
-    if (!candLower.includes('buenas tardes') && !candLower.includes('drimin') && !candLower.includes('administracion') && !candLower.includes('hola')) {
-      clientName = candidate;
-    }
-  }
-
-  if (!clientName && pushName && typeof pushName === 'string') {
-    const pClean = pushName.trim();
-    const pLower = pClean.toLowerCase();
-    if (pClean && !pLower.includes('user') && !pLower.includes('whatsapp') && pClean.length >= 3) {
-      clientName = pClean;
-    }
-  }
-
-  let unitNumber = 'Empresa no especificada';
-  const deptoMatch = userCombinedText.match(/(?:depto|departamento|dpto|unidad|empresa|faena|compañía|compania)\s*n?°?\s*([A-Za-z0-9\s.-]+?)(?=\s+y\s|\s+asunto|\s+para|\s+el\s|\s+a\s+las|\s+quiero|$|,|\.)/i) || 
-                    userCombinedText.match(/(?:empresa|faena|compañía|compania)\s*([A-Za-z0-9\s.-]+)/i);
-  if (deptoMatch && deptoMatch[1]) {
-    unitNumber = deptoMatch[1].trim();
-  }
-
-  const businessDays = getNextBusinessDays(5);
-  const day1Formatted = formatBusinessDate(businessDays[0]);
-  const day2Formatted = formatBusinessDate(businessDays[1]);
-  const day3Formatted = formatBusinessDate(businessDays[2]);
-
-  let targetBusinessDate = businessDays[0];
-  let targetFormatted = formatBusinessDate(targetBusinessDate);
-
-  let matchedByDayName = false;
-  for (const bDay of businessDays) {
-    const dayNames = ["domingo", "lunes", "martes", "miércoles", "miercoles", "jueves", "viernes", "sábado"];
-    const bDayName = dayNames[bDay.getDay()];
-    if (textLower.includes(bDayName) || (bDayName === 'miércoles' && textLower.includes('miercoles'))) {
-      targetBusinessDate = bDay;
-      targetFormatted = formatBusinessDate(bDay);
-      matchedByDayName = true;
-      break;
-    }
-  }
-
-  if (!matchedByDayName) {
-    for (const bDay of businessDays) {
-      const dayNumStr = String(bDay.getDate());
-      const regexDayNum = new RegExp(`(?:el|día|dia|de|para)?\\s*\\b${dayNumStr}\\b`);
-      if (regexDayNum.test(textLower)) {
-        targetBusinessDate = bDay;
-        targetFormatted = formatBusinessDate(bDay);
-        break;
-      }
-    }
-  }
-
-  const availableSlots = getAvailableSlots(targetBusinessDate);
-
-  const isCancelRequest = textLower.includes('cancelar') || textLower.includes('anular') || textLower.includes('no podre') || textLower.includes('no podré') || textLower.includes('eliminar cita');
-  const isRescheduleRequest = textLower.includes('reprogramar') || textLower.includes('cambiar hora') || textLower.includes('cambiar fecha') || textLower.includes('modificar cita');
-
-  // MÓDULO CANCELACIÓN
-  if (isCancelRequest) {
-    const db = readDb();
-    const appointments = db.appointments || [];
-    const activeAptIndex = appointments.findIndex(a => a.status !== 'Cancelada' && a.status !== 'Cancelada (Reprogramada)');
-
-    if (activeAptIndex !== -1) {
-      const aptToCancel = appointments[activeAptIndex];
-      aptToCancel.status = 'Cancelada';
-      aptToCancel.paymentStatus = 'Cancelada por el cliente';
-      writeDb(db);
-
-      const nameTag = clientName ? `@${clientName}` : (aptToCancel.clientName || 'Cliente');
-      const responseText = `🚫 **CONSULTA MINERA CANCELADA CON ÉXITO** 📅\n\n` +
-        `Estimado/a **${nameTag}**:\n` +
-        `Tu consulta técnica agendada para el **${aptToCancel.dateTime}** ha sido **cancelada exitosamente** y el bloque de horario se ha **liberado** en el sistema.\n\n` +
-        `Si en el futuro deseas agendar una nueva cita, estaremos gustosos de atenderte. ¡Que tengas un excelente día! ⛏️📜`;
-
-      // Despacho nativo de correo Outlook Ferozo + n8n opcional
-      dispatchDriminEvent({
-        event: 'MEETING_CANCELED',
-        emailSubject: 'cancelación de reunión',
-        clientName: nameTag,
-        appointmentId: aptToCancel.id,
-        adminEmail
-      });
-
-      return { reply: responseText, toolExecuted: { name: 'cancelar_cita', result: { canceledId: aptToCancel.id } }, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
-    } else {
-      return { reply: `ℹ️ No encontramos una cita activa registrada a tu nombre para cancelar. Si deseas agendar una nueva reunión, con gusto te mostramos los horarios disponibles. ${brandEmoji}`, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
-    }
-  }
-
-  // MÓDULO REPROGRAMACIÓN
-  if (isRescheduleRequest) {
-    const db = readDb();
-    const appointments = db.appointments || [];
-    const activeApt = appointments.find(a => a.status !== 'Cancelada' && a.status !== 'Cancelada (Reprogramada)');
-
-    if (activeApt) {
-      activeApt.status = 'Cancelada (Reprogramada)';
-      writeDb(db);
-    }
-
-    const refreshedSlots = getAvailableSlots(targetBusinessDate);
-    const nameTag = clientName ? `@${clientName}` : 'Cliente';
-    const morningList = refreshedSlots.filter(s => s.block === 'MAÑANA').map(s => `• **${s.id}**️⃣ ${s.label}`).join('\n');
-    const afternoonList = refreshedSlots.filter(s => s.block === 'TARDE').map(s => `• **${s.id}**️⃣ ${s.label}`).join('\n');
-
-    const responseText = `🔄 **REPROGRAMACIÓN DE CITA** 🗓️\n\n` +
-      `Hola **${nameTag}**, con gusto te ayudamos a reprogramar tu cita. Tu horario anterior ha sido liberado.\n\n` +
-      `A continuación te mostramos las opciones disponibles para los **próximos días hábiles**:\n\n` +
-      `📅 **DÍAS HÁBILES DISPONIBLES**:\n` +
-      `• 📆 **${day1Formatted}**\n` +
-      `• 📆 **${day2Formatted}**\n` +
-      `• 📆 **${day3Formatted}**\n\n` +
-      `Bloques libres de 1 hora para el **${targetFormatted}**:\n\n` +
-      (afternoonList ? `🕒 **HORARIOS DISPONIBLES (15:00 A 18:00 HRS)**:\n${afternoonList}\n\n` : '') +
-      `Por favor indícanos el nuevo día y número de bloque u horario que prefieres.`;
-
-    return { reply: responseText, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
-  }
-
-  // ENRUTAMIENTO DIRECTO DEL MENÚ PRINCIPAL (1..5)
-  const lastBotMsg = (history && history.length > 0) 
-    ? history.filter(h => h.role === 'assistant').slice(-1)[0]?.content || ''
-    : '';
-
-  const wasShowingMainMenu = lastBotMsg.includes('Coordinación de consulta') ||
-                             lastBotMsg.includes('Reporte de incidencia') || 
-                             lastBotMsg.includes('Datos de transferencia') ||
-                             lastBotMsg.includes('en qué te podemos ayudar hoy');
-
-  const trimmedMsg = message.trim();
-  const mainMenuDigitMatch = trimmedMsg.match(/^([1-5])$/);
-
-  let optNum = (wasShowingMainMenu && mainMenuDigitMatch) ? parseInt(mainMenuDigitMatch[1], 10) : null;
-  if (!optNum) {
-    if (textLower.includes('agendar') || textLower.includes('reunion') || textLower.includes('reunión') || textLower.includes('cita') || textLower.includes('coordinar')) {
-      optNum = 1;
-    } else if (textLower.includes('datos bancarios') || textLower.includes('cuenta corriente') || textLower.includes('transferir') || textLower.includes('datos de transferencia')) {
-      optNum = 5;
-    }
-  }
-
-  if (optNum) {
-    if (optNum === 1) {
-      const afternoonList = availableSlots.filter(s => s.block === 'TARDE').map(s => `• **${s.id}**️⃣ ${s.label}`).join('\n');
-      const nameTag = clientName ? `@${clientName}` : 'Cliente';
-
-      const responseText = `¡Hola **${nameTag}**, qué gusto saludarte! ⚖️📜\n\n` +
-        `Con mucho gusto coordinamos tu consulta jurídica con el **Abogado Felipe Herrera**.\n\n` +
-        `Para agendar tu bloque de 1 hora y sincronizar la reunión directamente en el **Calendario Oficial de Outlook**, por favor indícanos:\n\n` +
-        `• 1️⃣ Tu **nombre y apellido**\n` +
-        `• 2️⃣ Tu **empresa o faena** (si aplica)\n` +
-        `• 3️⃣ Un breve **asunto o motivo de la consulta** (ej: concesión minera, contratos, terrenos)\n\n` +
-        `📅 **PRÓXIMOS DÍAS HÁBILES DISPONIBLES**:\n` +
-        `• 📆 **${day1Formatted}**\n` +
-        `• 📆 **${day2Formatted}**\n` +
-        `• 📆 **${day3Formatted}**\n\n` +
-        (afternoonList ? `🕒 **HORARIOS DE ATENCIÓN DE 1 HORA (${targetFormatted})**:\n${afternoonList}\n\n` : '') +
-        `Por favor indícanos el bloque que te acomoda y tus datos para dejarla reservada de inmediato.`;
-
-      return { reply: responseText, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
-    } else if (optNum === 4) {
-      const { processIncidentFlow } = require('./incidentEngine');
-      const incResult = await processIncidentFlow({
-        message,
-        history,
-        clientName: clientName || null,
-        unitNumber: unitNumber || 'Empresa no especificada',
-        condoName,
-        adminEmail,
-        industryMode: 'drimin'
-      });
-      return {
-        reply: incResult.reply,
-        toolExecuted: incResult.incident ? { name: 'reportar_incidencia', result: incResult.incident } : null,
-        voucher: null,
-        industry: 'drimin',
-        greeting: DRIMIN_CONFIG.greeting
-      };
-    } else if (optNum === 5) {
-      const bankInfo = getCompanyPaymentDetails('drimin');
-      const nameTag = clientName ? `@${clientName}` : 'Cliente';
-      const unitTag = (unitNumber && unitNumber !== 'Empresa no especificada') ? ` (Empresa ${unitNumber})` : '';
-
-      const responseText = `🏦 **DATOS DE TRANSFERENCIA BANCARIA** 💳✨\n\n` +
-        `Estimado/a **${nameTag}**${unitTag}:\n` +
-        `A continuación te compartimos los datos bancarios oficiales para el pago de honorarios y servicios de **${condoName}**:\n\n` +
-        `• 🏢 **Razón Social / Titular**: *${bankInfo.holderName}*\n` +
-        `• 🆔 **RUT**: *${bankInfo.rut}*\n` +
-        `• 🏦 **Banco**: *${bankInfo.bankName}*\n` +
-        `• 📋 **Tipo de Cuenta**: *${bankInfo.accountType}*\n` +
-        `• 🔢 **Número de Cuenta**: *${bankInfo.accountNumber}*\n` +
-        `• 📩 **Correo para Comprobantes**: \`${bankInfo.emailNotification}\`\n\n` +
-        `📌 **Instrucciones**: ${bankInfo.instructions} ⛏️📜`;
-
-      return { reply: responseText, toolExecuted: { name: 'mostrar_datos_transferencia', result: bankInfo }, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
-    }
-  }
-
-  // DETECCIÓN DE BLOQUE DE HORARIO
-  const lastBotMsgJson = (history && history.length > 0) ? JSON.stringify(history[history.length - 1]).toLowerCase() : "";
-  const wasAwaitingSlot = lastBotMsgJson.includes('bloques') || lastBotMsgJson.includes('horarios') || lastBotMsgJson.includes('días hábiles') || lastBotMsgJson.includes('número de bloque');
-
-  let matchedSlot = null;
-
-  if (wasAwaitingSlot) {
-    const digitMatch = trimmedMsg.match(/\b([1-3])\b/i);
-    if (digitMatch && digitMatch[1]) {
-      const slotId = parseInt(digitMatch[1], 10);
-      matchedSlot = MEETING_SLOTS.find(s => s.id === slotId);
-    }
-
-    if (!matchedSlot) {
-      if (textLower.includes('15:00') || textLower.includes('3 pm') || textLower.includes('a las 3') || textLower.includes('a las 15') || textLower.includes('15 a 16') || textLower.includes('3 a 4')) matchedSlot = MEETING_SLOTS[0];
-      else if (textLower.includes('16:00') || textLower.includes('4 pm') || textLower.includes('a las 4') || textLower.includes('a las 16') || textLower.includes('16 a 17') || textLower.includes('4 a 5')) matchedSlot = MEETING_SLOTS[1];
-      else if (textLower.includes('17:00') || textLower.includes('5 pm') || textLower.includes('a las 5') || textLower.includes('a las 17') || textLower.includes('17 a 18') || textLower.includes('5 a 6')) matchedSlot = MEETING_SLOTS[2];
-    }
-  }
-
-  if (!matchedSlot && (lastBotMsgJson.includes('datos requeridos para completar') || lastBotMsgJson.includes('datos requeridos para confirmar'))) {
-    for (const s of MEETING_SLOTS) {
-      if (lastBotMsgJson.includes(s.label.toLowerCase()) || lastBotMsgJson.includes(s.timeStr.toLowerCase())) {
-        matchedSlot = s;
-        break;
-      }
-    }
-  }
-
-  // FLUJO DE INCIDENCIAS LEGALES (SOLO SI NO SE ESTABA ESPERANDO SLOT NI SE TIENE INTENCIÓN DE REUNIÓN)
-  const hasMeetingIntent = textLower.includes('reunion') || textLower.includes('reunión') || textLower.includes('agendar') || textLower.includes('coordinar') || textLower.includes('cita') || textLower.includes('bloque');
-  const isAwaitingIncident = lastBotMsg.includes('área o tipo de consulta legal') || lastBotMsg.includes('reporte de incidencia') || lastBotMsg.includes('requerimiento jurídico');
-  const isIncidentKeyword = textLower.includes('fiscalización') || textLower.includes('sumario') || textLower.includes('multa') || textLower.includes('incidencia');
-
-  if (!wasAwaitingSlot && !hasMeetingIntent && (isIncidentKeyword || isAwaitingIncident)) {
-    const { processIncidentFlow } = require('./incidentEngine');
-    const incResult = await processIncidentFlow({
-      message,
-      history,
-      clientName: clientName || null,
-      unitNumber: unitNumber || 'Empresa no especificada',
-      condoName,
-      adminEmail,
-      industryMode: 'drimin'
-    });
-    if (!incResult.cancelFlow) {
-      return {
-        reply: incResult.reply,
-        toolExecuted: incResult.incident ? { name: 'reportar_incidencia', result: incResult.incident } : null,
-        voucher: null,
-        industry: 'drimin',
-        greeting: DRIMIN_CONFIG.greeting
-      };
-    }
-  }
-
-  if (matchedSlot) {
-    const isSlotAvailable = availableSlots.some(s => s.id === matchedSlot.id);
-
-    if (!isSlotAvailable) {
-      const nameTag = clientName ? `@${clientName}` : 'Cliente';
-      const morningList = availableSlots.filter(s => s.block === 'MAÑANA').map(s => `• ${s.id}️⃣ **${s.label}**`).join('\n');
-      const afternoonList = availableSlots.filter(s => s.block === 'TARDE').map(s => `• ${s.id}️⃣ **${s.label}**`).join('\n');
-
-      const responseText = `⚠️ **${nameTag}**, el horario de las **${matchedSlot.label}** para el **${targetFormatted}** ya se encuentra **reservado**.\n\n` +
-        `Para evitar choques de horario, te mostramos los bloques que aún están **disponibles para el ${targetFormatted}**:\n\n` +
-        (afternoonList ? `🕒 **HORARIOS DISPONIBLES (15:00 A 18:00 HRS)**:\n${afternoonList}\n\n` : '') +
-        `Por favor indícanos otro número de bloque u horario disponible.`;
-      return { reply: responseText, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
-    } else {
-      let finalName = clientName;
-      let meetingReason = null;
-
-      let cleanTextForReason = userCombinedText
-        .replace(/empresa\s*n?°?\s*[A-Za-z0-9\s.-]+/gi, '')
-        .replace(/asunto\s*de\s*reunion,?/gi, '')
-        .replace(/asunto:?/gi, '')
-        .replace(/motivo:?/gi, '')
-        .replace(/consulta\s*por,?/gi, '');
-
-      const reasonMatch = cleanTextForReason.match(/(?:motivo|asunto|por|sobre|dudas en|duda en|consulta por|consulta sobre|asunto:)\s*[:=]?\s*([^.,\n]+)/i);
-      if (reasonMatch && reasonMatch[1] && reasonMatch[1].trim().length > 2) {
-        meetingReason = reasonMatch[1].trim();
-      }
-
-      if (!meetingReason && message && message.trim().length > 3) {
-        let candidate = message.trim().replace(/asunto:?/gi, '').replace(/motivo:?/gi, '').trim();
-        if (candidate.length > 2) meetingReason = candidate;
-      }
-
-      if (!finalName || unitNumber === 'Empresa no especificada' || !meetingReason) {
-        const missingFields = [];
-        if (!finalName) missingFields.push('1️⃣ **Nombre y Apellido completo**');
-        if (unitNumber === 'Empresa no especificada') missingFields.push('2️⃣ **Empresa / Faena / Unidad Minera** (ej: Minera San José / Santiago)');
-        if (!meetingReason) missingFields.push('3️⃣ **Asunto o Motivo de la consulta minera** (ej: revisión de concesión)');
-
-        const responseText = `📌 **DATOS REQUERIDOS PARA COMPLETAR TU REUNIÓN** 📝\n\n` +
-          `Has seleccionado el horario de las **${matchedSlot.label}** para el **${targetFormatted}**.\n\n` +
-          `Para registrar la cita en **Google Calendar** y notificar por correo electrónico (\`${adminEmail}\`), por favor indícanos en tu respuesta:\n\n` +
-          missingFields.join('\n') + `\n\n` +
-          `*(En cuanto nos indiques esta información, tu reunión quedará reservada de inmediato y emitiremos tu pase digital QR).* ${brandEmoji}`;
-
-        return { reply: responseText, toolExecuted: null, voucher: null, industry: 'drimin', greeting: DRIMIN_CONFIG.greeting };
-      }
-
-      const calendarSummary = `Consulta Minera: ${finalName} - Empresa: ${unitNumber} - Asunto: ${meetingReason}`;
-
-      const year = targetBusinessDate.getFullYear();
-      const month = String(targetBusinessDate.getMonth() + 1).padStart(2, '0');
-      const day = String(targetBusinessDate.getDate()).padStart(2, '0');
-      const hStr = String(matchedSlot.hour).padStart(2, '0');
-      const mStr = String(matchedSlot.minute).padStart(2, '0');
-
-      const startIso = `${year}-${month}-${day}T${hStr}:${mStr}:00-03:00`;
-      const endHour = matchedSlot.hour + 1; // Duración oficial de 1 hora
-      const endMinute = matchedSlot.minute;
-      const endHStr = String(endHour).padStart(2, '0');
-      const endMStr = String(endMinute).padStart(2, '0');
-      const endIso = `${year}-${month}-${day}T${endHStr}:${endMStr}:00-03:00`;
-
-      const aptResult = await executeTool('agendar_cita', {
-        clientName: finalName,
-        clientPhone: residentPhone,
-        unitNumber: unitNumber,
-        asunto: meetingReason,
-        summary: calendarSummary,
-        title: calendarSummary,
-        serviceType: calendarSummary,
-        dateTime: `${targetFormatted} de ${year} (${matchedSlot.label})`,
-        slotId: matchedSlot.id,
-        startIso,
-        endIso
-      });
-
-      const voucher = await createVoucher({
-        clientName: `${finalName} (Empresa: ${unitNumber})`,
-        clientPhone: residentPhone,
-        industry: 'drimin',
-        voucherType: `Pase Digital de Consulta Minera (${condoName})`,
-        discountOrAmount: `${calendarSummary} | ${targetFormatted} ${matchedSlot.label} | Gratuita ($0)`,
-        propertyAddress: condoName
-      });
-
-      // Despacho nativo de correo con archivo .ics para Outlook + n8n opcional
-      dispatchDriminEvent({
-        event: 'MEETING_BOOKED',
-        emailSubject: `coordinación de reunión - ${calendarSummary}`,
-        clientName: finalName,
-        unitNumber: unitNumber,
-        meetingReason: meetingReason,
-        dateTime: `${targetFormatted} (${matchedSlot.label})`,
-        startIso,
-        endIso,
-        summary: calendarSummary,
-        adminEmail,
-        qrCodeUrl: voucher.qrCodeDataUrl,
-        voucherCode: voucher.code
-      });
-
-      const responseText = `✅ **CONSULTA JURÍDICA AGENDADA CON ÉXITO** 📅\n\n` +
-        `Estimado/a **@${finalName}** (Empresa **${unitNumber}**):\n\n` +
-        `Tu cita ha sido agendada y registrada en el **Calendario Oficial de Drimin Services (Outlook)** para el **${targetFormatted}** en el bloque de **${matchedSlot.label}**.\n\n` +
-        `• 📋 **Asunto de la consulta**: *${meetingReason}*\n` +
-        `• 🏢 **Atención**: Drimin Services SpA (Abg. Felipe Herrera)\n` +
-        `• 🎟️ **Código de Pase QR**: \`${voucher.code}\`\n\n` +
-        `A continuación te enviamos tu **Pase Digital QR** oficial para el ingreso a la reunión. ¡Te esperamos puntualmente! ⛏️📜`;
-
-      return {
-        reply: responseText,
-        toolExecuted: { name: 'agendar_cita', result: aptResult.appointment },
-        voucher,
-        industry: 'drimin',
-        greeting: DRIMIN_CONFIG.greeting
-      };
-    }
-  }
-
-  // RESPUESTA INTELIGENTE Y HUMANIZADA CON GEMINI
   const geminiReply = await generateGeminiReply({
-    message,
+    message: textRaw,
     history,
-    senderPhone: residentPhone,
-    pushName: clientName || pushName,
-    availableSlots
+    senderPhone: phone,
+    pushName: state.clientName || pushName,
+    availableSlots: slotsForGemini
   });
 
   if (geminiReply) {
+    saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
     return {
       reply: geminiReply,
       toolExecuted: null,
@@ -590,19 +750,11 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
     };
   }
 
-  // FALLBACK AL SALUDO INICIAL Y EL MENÚ OFICIAL
-  const nameTag = clientName ? `@${clientName}` : 'Cliente';
-  const defaultReply = `¡Hola **${nameTag}**! Un gusto saludarte ⚖️📜 Te escribe el asistente virtual del **Abogado Felipe Herrera** en **Drimin Services SpA**.\n\n` +
-    `¿En qué te podemos colaborar el día de hoy?\n\n` +
-    `• 1️⃣ **Coordinar una consulta jurídica** (Derecho Minero, Energía, Terrenos Fiscales, Empresas o Litigios)\n` +
-    `• 2️⃣ **Cancelar una cita previa**\n` +
-    `• 3️⃣ **Reprogramar una reunión**\n` +
-    `• 4️⃣ **Reportar un requerimiento legal o fiscalización urgente**\n` +
-    `• 5️⃣ **Consultar datos bancarios oficiales**\n\n` +
-    `*(O si prefieres, cuéntame directamente qué necesitas y con gusto te oriento).*`;
-
+  // 13. FALLBACK INTELIGENTE
+  saveConversationState(phone, { ...state, lastBotMessageAt: new Date().toISOString() });
   return {
-    reply: defaultReply,
+    reply: `¡Por supuesto! En Drimin Services contamos con respaldo jurídico y técnico multidisciplinario para acompañar tus proyectos en la Región de Antofagasta y el norte del país.\n\n` +
+      `¿Te gustaría que te presente nuestros principales servicios o prefieres que coordinemos una reunión con nuestro equipo profesional?`,
     toolExecuted: null,
     voucher: null,
     industry: 'drimin',
@@ -612,6 +764,7 @@ async function processMessage({ message, history = [], senderPhone = null, pushN
 
 module.exports = {
   processMessage,
-  executeTool,
-  DRIMIN_CONFIG
+  DRIMIN_CONFIG,
+  SERVICES_MENU,
+  MEETING_SLOTS
 };

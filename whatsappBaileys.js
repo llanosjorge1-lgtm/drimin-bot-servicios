@@ -281,11 +281,32 @@ async function resetWhatsAppConnection() {
   return { success: true, message: 'Sesión reiniciada. Escanee el nuevo QR.' };
 }
 
+async function sendWhatsAppTextMessage(recipient, text) {
+  if (!isConnected || !waSocket) {
+    console.log(`⚠️ No se pudo enviar WhatsApp a [${recipient}]: WhatsApp no está conectado.`);
+    return false;
+  }
+  try {
+    let jid = recipient;
+    if (!jid.includes('@')) {
+      const cleanPhone = jid.replace(/\D/g, '');
+      jid = `${cleanPhone}@s.whatsapp.net`;
+    }
+    await waSocket.sendMessage(jid, { text });
+    console.log(`📤 Mensaje de WhatsApp enviado proactivamente a [${recipient}]`);
+    return true;
+  } catch (err) {
+    console.error(`Error enviando mensaje WhatsApp a [${recipient}]:`, err.message);
+    return false;
+  }
+}
+
 module.exports = {
   connectToWhatsApp,
   getWhatsAppStatus,
   resetWhatsAppConnection,
   isChatPaused,
   pauseChat,
-  unpauseChat
+  unpauseChat,
+  sendWhatsAppTextMessage
 };

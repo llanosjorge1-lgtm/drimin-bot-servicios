@@ -31,10 +31,11 @@ function readDb() {
     const db = JSON.parse(raw);
     db.pendingRequests = db.pendingRequests || [];
     db.incidents = db.incidents || [];
+    db.conversationStates = db.conversationStates || {};
     return db;
   } catch (err) {
     console.error("Error leyendo store.json:", err);
-    return { appointments: [], vouchers: [], clients: [], pendingRequests: [], incidents: [], settings: {} };
+    return { appointments: [], vouchers: [], clients: [], pendingRequests: [], incidents: [], settings: {}, conversationStates: {} };
   }
 }
 
@@ -136,6 +137,30 @@ function resolvePendingRequest(id) {
   return { success: false, message: "Solicitud no encontrada" };
 }
 
+function getConversationState(phone) {
+  if (!phone) return null;
+  const db = readDb();
+  return (db.conversationStates && db.conversationStates[phone]) || null;
+}
+
+function saveConversationState(phone, state) {
+  if (!phone) return;
+  const db = readDb();
+  db.conversationStates = db.conversationStates || {};
+  db.conversationStates[phone] = {
+    ...(db.conversationStates[phone] || {}),
+    ...state,
+    updatedAt: new Date().toISOString()
+  };
+  writeDb(db);
+  return db.conversationStates[phone];
+}
+
+function getAllConversationStates() {
+  const db = readDb();
+  return db.conversationStates || {};
+}
+
 module.exports = {
   readDb,
   writeDb,
@@ -144,5 +169,8 @@ module.exports = {
   getCompanyPaymentDetails,
   readPendingRequests,
   addPendingRequest,
-  resolvePendingRequest
+  resolvePendingRequest,
+  getConversationState,
+  saveConversationState,
+  getAllConversationStates
 };

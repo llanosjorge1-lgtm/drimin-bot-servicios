@@ -105,50 +105,58 @@ async function notifyMeetingBooked(data) {
     endIso,
     summary = 'Consulta Jurídica Minera',
     adminEmail = 'felipe.herrera@driminservices.cl',
-    voucherCode = 'N/A'
+    voucherCode = 'N/A',
+    clientEmail = null
   } = data;
+
+  const recipients = [adminEmail];
+  if (clientEmail && clientEmail.includes('@')) {
+    recipients.push(clientEmail);
+  }
 
   const icsData = createIcsContent({
     uid: `cita-${voucherCode}-${Date.now()}@driminservices.cl`,
     summary: `[Drimin Services] ${summary} - ${clientName}`,
-    description: `Consulta Jurídica / Técnica Especializada.\nCliente: ${clientName} (${unitNumber})\nAsunto: ${meetingReason}\nPase Digital: ${voucherCode}\nAtención: Abg. Felipe Herrera`,
+    description: `Consulta Jurídica / Técnica Especializada.\nCliente: ${clientName} (${unitNumber})\nAsunto: ${meetingReason}\nPase Digital: ${voucherCode}\nContacto: Drimin Services (+56 9 8877 6655)`,
     startIso,
     endIso,
-    organizerEmail: adminEmail
+    organizerEmail: adminEmail,
+    clientEmail: clientEmail
   });
 
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #dcdcdc; border-radius: 8px; overflow: hidden;">
       <div style="background-color: #0b2545; color: white; padding: 20px; text-align: center;">
-        <h2 style="margin: 0;">📅 Nueva Consulta Jurídica Agendada</h2>
-        <p style="margin: 5px 0 0; color: #8da9c4;">Drimin Services SpA - Atención Automatizada 24/7</p>
+        <h2 style="margin: 0;">📅 Confirmación de Reunión</h2>
+        <p style="margin: 5px 0 0; color: #8da9c4;">Drimin Services SpA - Soluciones Jurídicas y Técnicas</p>
       </div>
       <div style="padding: 24px; color: #333; line-height: 1.6;">
-        <p>Estimado <strong>Abogado Felipe Herrera</strong>,</p>
-        <p>El bot asistente ha coordinado una nueva reunión con un cliente. Se adjunta el archivo de calendario para sincronizar automáticamente con su <strong>Outlook</strong>.</p>
+        <p>Estimado/a <strong>${clientName}</strong>,</p>
+        <p>Se ha coordinado y confirmado tu reunión con el equipo profesional de <strong>Drimin Services</strong>.</p>
         
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background: #f8f9fa; border-radius: 6px;">
           <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">👤 Cliente:</td><td style="padding: 10px; border-bottom: 1px solid #eee;">${clientName}</td></tr>
-          <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">🏢 Empresa/Unidad:</td><td style="padding: 10px; border-bottom: 1px solid #eee;">${unitNumber}</td></tr>
+          <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">🏢 Empresa:</td><td style="padding: 10px; border-bottom: 1px solid #eee;">${unitNumber}</td></tr>
           <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">📆 Fecha y Hora:</td><td style="padding: 10px; border-bottom: 1px solid #eee; color: #0b2545; font-weight: bold;">${dateTime}</td></tr>
-          <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">📋 Asunto:</td><td style="padding: 10px; border-bottom: 1px solid #eee;">${meetingReason}</td></tr>
-          <tr><td style="padding: 10px; font-weight: bold;">🎟️ Código Pase:</td><td style="padding: 10px;"><code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">${voucherCode}</code></td></tr>
+          <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">📋 Motivo / Asunto:</td><td style="padding: 10px; border-bottom: 1px solid #eee;">${meetingReason}</td></tr>
+          <tr><td style="padding: 10px; font-weight: bold; border-bottom: 1px solid #eee;">💻 Modalidad:</td><td style="padding: 10px; border-bottom: 1px solid #eee;">Virtual (Videollamada)</td></tr>
+          <tr><td style="padding: 10px; font-weight: bold;">🎟️ Código de Pase:</td><td style="padding: 10px;"><code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">${voucherCode}</code></td></tr>
         </table>
 
         <div style="background-color: #eef4f8; border-left: 4px solid #134074; padding: 12px; margin: 15px 0;">
-          📌 <strong>Sincronización Outlook:</strong> Abra el archivo adjunto <code>cita_drimin.ics</code> o haga clic en "Agregar al calendario" en su cliente Outlook.
+          📌 <strong>Sincronización con Calendario:</strong> Se adjunta la invitación <code>cita_drimin.ics</code> compatible con Outlook, Google Calendar y Apple Calendar.
         </div>
       </div>
       <div style="background-color: #f1f1f1; padding: 12px; text-align: center; font-size: 12px; color: #777;">
-        Drimin Services SpA • Plataforma de Inteligencia Legal y Gestión Minera
+        Drimin Services SpA • Región de Antofagasta • Fono: +56 9 8877 6655
       </div>
     </div>
   `;
 
   return transporter.sendMail({
-    from: `"Drimin Bot Asistente" <${SMTP_CONFIG.auth.user}>`,
-    to: adminEmail,
-    subject: `📅 Cita Agendada: ${clientName} - ${dateTime} | Drimin Services`,
+    from: `"Drimin Services" <${SMTP_CONFIG.auth.user}>`,
+    to: recipients.join(', '),
+    subject: `📅 Confirmación de Reunión: ${clientName} - ${dateTime} | Drimin Services`,
     html: htmlBody,
     icalEvent: {
       filename: 'cita_drimin.ics',

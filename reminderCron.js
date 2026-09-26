@@ -1,16 +1,45 @@
 const cron = require('node-cron');
-const { readDb, writeDb } = require('./db');
+const { readDb, writeDb, getAllConversationStates, saveConversationState } = require('./db');
+const { sendWhatsAppTextMessage } = require('./whatsappBaileys');
+
+function isWithinChileBusinessHours(date = new Date()) {
+  try {
+    // Convertir a hora de Chile (America/Santiago)
+    const options = { timeZone: 'America/Santiago', hour12: false, weekday: 'short', hour: 'numeric', minute: 'numeric' };
+    const parts = new Intl.DateTimeFormat('es-CL', options).formatToParts(date);
+    const partMap = {};
+    parts.forEach(p => { partMap[p.type] = p.value; });
+
+    const weekday = (partMap.weekday || '').toLowerCase(); // lun, mar, mié, jue, vie, sáb, dom
+    const hour = parseInt(partMap.hour, 10);
+
+    // Lunes a viernes (excluyendo sábado y domingo)
+    const isWeekend = weekday.startsWith('s') || weekday.startsWith('d');
+    if (isWeekend) return false;
+
+    // Horario comercial de 09:00 a 18:30
+    if (hour >= 9 && hour < 19) {
+      return true;
+    }
+    return false;
+  } catch (err) {
+    const day = date.getDay();
+    const h = date.getHours();
+    return day >= 1 && day <= 5 && h >= 9 && h <= 18;
+  }
+}
 
 function startReminderCron() {
-  console.log('⏰ Sistema de Recordatorios de Consultas Drimin iniciado...');
+  console.log('⏰ Sistema de Recordatorios y Seguimiento Drimin Services iniciado...');
 
-  cron.schedule('0 * * * *', async () => {
-    console.log('🔍 Ejecutando verificación horaria de recordatorios de citas...');
+  // Cada 15 minutos
+  cron.schedule('*/15 * * * *', async () => {
     const db = readDb();
-    const appointments = db.appointments || [];
     const now = new Date();
 
-    appointments.forEach(apt => {
+    // 1. RECORDATORIO DE CITAS CONFIRMADAS (2 HORAS ANTES)
+    const appointments = db.appointments || [];
+    appointments.forEach(async apt => {
       if (apt.status === 'Confirmada' && apt.startIso && !apt.reminderSent) {
         const aptDate = new Date(apt.startIso);
         const diffMs = aptDate - now;
@@ -18,12 +47,63 @@ function startReminderCron() {
 
         if (diffHours > 0 && diffHours <= 2) {
           apt.reminderSent = true;
-          console.log(`🔔 Recordatorio emitido para ${apt.clientName} (Consulta: ${apt.asunto})`);
+          console.log(`🔔 Recordatorio de cita emitido para ${apt.clientName} (Consulta: ${apt.asunto})`);
+          
+          if (apt.clientPhone) {
+            const reminderMsg = `¡Hola **${apt.clientName}**! 👋 Te recordamos que hoy a las **${apt.dateTime || 'horario convenido'}** se llevará a cabo tu reunión con el equipo de **Drimin Services**.\n\n` +
+              `Modalidad: Virtual.\n` +
+              `Estaremos puntualmente esperando tu conexión. ¡Que tengas un excelente día! ⚖️⛏️`;
+            await sendWhatsAppTextMessage(apt.clientPhone, reminderMsg);
+          }
         }
       }
     });
-
     writeDb(db);
+
+    // 2. SEGUIMIENTO AUTOMATIZADO A LAS 24 HORAS (DENTRO DE HORARIO COMERCIAL)
+    const conversationStates = getAllConversationStates();
+    const isBusinessHour = isWithinChileBusinessHours(now);
+
+    if (isBusinessHour) {
+      for (const phone of Object.keys(conversationStates)) {
+        const state = conversationStates[phone];
+        if (!state) continue;
+
+        // No enviar si el cliente pidió no ser contactado (optOut)
+        if (state.optOut) continue;
+
+        // No enviar si ya se le envió el recordatorio
+        if (state.followUpSent) continue;
+
+        // No enviar si ya tiene una reunión agendada o resuelta
+        const hasActiveApt = appointments.some(a => 
+          (a.clientPhone === phone || a.clientPhone === `+${phone}`) && 
+          a.status !== 'Cancelada' && a.status !== 'Cancelada (Reprogramada)'
+        );
+        if (hasActiveApt) continue;
+
+        // Verificar tiempo transcurrido desde el último mensaje del bot
+        if (state.lastBotMessageAt) {
+          const lastBotTime = new Date(state.lastBotMessageAt);
+          const elapsedHours = (now - lastBotTime) / (1000 * 60 * 60);
+
+          // Si han transcurrido más de 24 horas y menos de 72 horas
+          if (elapsedHours >= 24 && elapsedHours <= 72) {
+            console.log(`📩 Enviando seguimiento de 24h a [${phone}] (Transcurridas ${Math.round(elapsedHours)} hrs)...`);
+            
+            const followUpText = `¡Hola! 👋 Te saluda nuevamente el asesor virtual de Drimin Services. Quería saber si lograste revisar nuestros servicios o si te gustaría que te ayudara a coordinar una reunión. Quedamos atentos a lo que necesites. ¡Que tengas un excelente día!`;
+            
+            const sent = await sendWhatsAppTextMessage(phone, followUpText);
+            if (sent) {
+              saveConversationState(phone, {
+                followUpSent: true,
+                followUpSentAt: now.toISOString()
+              });
+            }
+          }
+        }
+      }
+    }
   });
 }
 
