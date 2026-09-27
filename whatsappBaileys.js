@@ -149,13 +149,17 @@ async function connectToWhatsApp(forceClean = false) {
         console.log('⚠️ Sesión cerrada por WhatsApp. Limpiando credenciales para generar QR fresco...');
         currentQrDataUrl = null;
         clearAuthInfo();
-        setTimeout(() => connectToWhatsApp(true), 3000);
+        setTimeout(() => connectToWhatsApp(true), 2000);
+      } else if (statusCode === 515) {
+        console.log('🔄 Reinicio requerido por WhatsApp (código 515). Reconectando de inmediato...');
+        setTimeout(() => connectToWhatsApp(false), 1500);
       } else {
+        console.log(`⏳ Reintentando conexión con WhatsApp en 5 segundos (código ${statusCode || 'desconocido'})...`);
         setTimeout(() => {
           if (!isConnected) {
             connectToWhatsApp(false);
           }
-        }, 10000);
+        }, 5000);
       }
     } else if (connection === 'open') {
       isConnecting = false;

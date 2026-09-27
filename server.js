@@ -15,6 +15,10 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Healthcheck y Keep-Alive (UptimeRobot / Cron)
+app.get('/ping', (req, res) => res.send('pong'));
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+
 // Estado de WhatsApp & QR
 app.get('/api/status', (req, res) => {
   const status = getWhatsAppStatus();
