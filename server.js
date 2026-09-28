@@ -124,6 +124,15 @@ app.post('/api/pending-requests/:id/resolve', (req, res) => {
   res.json(result);
 });
 
+// Guardianes globales anti-crash para evitar que el proceso Node se caiga
+process.on('uncaughtException', (err) => {
+  console.error('🛡️ [Anti-Crash] uncaughtException capturada:', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('🛡️ [Anti-Crash] unhandledRejection capturada:', reason?.message || reason);
+});
+
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, async () => {
   console.log(`\n===================================================`);
@@ -133,4 +142,12 @@ server.listen(PORT, async () => {
 
   startReminderCron();
   await connectToWhatsApp();
+
+  // Auto-ping Keep-Alive cada 8 minutos (evita que el plan gratuito de Render se duerma a los 15 min)
+  const renderUrl = process.env.RENDER_EXTERNAL_URL || 'https://drimin-bot-servicios.onrender.com';
+  setInterval(() => {
+    fetch(`${renderUrl}/ping`)
+      .then(() => console.log('💓 [KeepAlive] Auto-ping a Render completado'))
+      .catch(err => console.log('ℹ️ [KeepAlive] Heartbeat interno:', err.message));
+  }, 8 * 60 * 1000);
 });

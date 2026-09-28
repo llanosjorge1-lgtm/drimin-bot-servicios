@@ -9,6 +9,8 @@ const { processMessage } = require('./agentEngine');
 let currentQrDataUrl = null;
 let isConnected = false;
 let waSocket = null;
+let isConnecting = false;
+let connectingTimeout = null;
 
 const sessionHistories = new Map();
 const chatPauses = new Map(); // remoteJid -> timestamp hasta cuando está en pausa el bot
@@ -59,213 +61,249 @@ function clearAuthInfo() {
         } catch (fErr) {}
       }
       fs.rmSync(authDir, { recursive: true, force: true });
-      console.log('🧹 Carpeta baileys_auth_drimin eliminada con éxito.');
+      console.log('🧹 [Baileys] Carpeta de autenticación eliminada exitosamente.');
     } catch (e) {
-      console.error('Error eliminando baileys_auth_drimin:', e.message);
+      console.error('❌ Error eliminando baileys_auth_drimin:', e.message);
     }
   }
 }
 
-let isConnecting = false;
-
 async function connectToWhatsApp(forceClean = false) {
   if (isConnecting && !forceClean) {
-    console.log('⏳ Conexión a WhatsApp Drimin ya en progreso, omitiendo llamada duplicada...');
+    console.log('⏳ [Baileys] Conexión en progreso, esperando...');
     return;
   }
   isConnecting = true;
 
-  const credsFile = path.join(__dirname, 'baileys_auth_drimin', 'creds.json');
+  // Timeout de seguridad: si tras 45s no hay resultado, liberar la bandera
+  if (connectingTimeout) clearTimeout(connectingTimeout);
+  connectingTimeout = setTimeout(() => {
+    if (isConnecting) {
+      console.log('⚠️ [Baileys Watchdog] Conexión demoró más de 45s. Liberando bandera isConnecting...');
+      isConnecting = false;
+    }
+  }, 45000);
+
   if (forceClean) {
     clearAuthInfo();
-  } else if (fs.existsSync(credsFile)) {
-    try {
-      const credsData = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
-      if (!credsData.me) {
-        console.log('🧹 Limpiando sesión previa Drimin sin autenticar para forzar emisión de nuevo QR...');
-        clearAuthInfo();
-      }
-    } catch (e) {
-      clearAuthInfo();
-    }
   }
 
-  const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_drimin');
-
+  // Cerrar y limpiar completamente cualquier socket previo
   if (waSocket) {
     try {
       waSocket.ev.removeAllListeners();
+      if (waSocket.ws) {
+        waSocket.ws.close();
+      }
+      waSocket.end(new Error('Reconnection cleanup'));
     } catch (e) {}
+    waSocket = null;
   }
 
-  const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1043857760] }));
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_drimin');
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1043857760] }));
 
-  waSocket = makeWASocket({
-    version,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: false,
-    auth: state,
-    browser: Browsers.ubuntu('Chrome'),
-    syncFullHistory: false,
-    markOnlineOnConnect: false,
-    generateHighQualityLinkPreview: false,
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
-    keepAliveIntervalMs: 30000
-  });
+    waSocket = makeWASocket({
+      version,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: false,
+      auth: state,
+      browser: Browsers.ubuntu('Chrome'),
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
+      generateHighQualityLinkPreview: false,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 25000,
+      retryRequestDelayMs: 500,
+      maxMsgRetryCount: 5
+    });
 
-  waSocket.ev.on('creds.update', saveCreds);
+    waSocket.ev.on('creds.update', saveCreds);
 
-  waSocket.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
+    waSocket.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update;
 
-    if (qr) {
-      console.log('\n===================================================');
-      console.log('📱 CÓDIGO QR GENERADO PARA DRIMIN SERVICES WHATSAPP:');
-      qrcodeTerminal.generate(qr, { small: true });
-      console.log('===================================================\n');
+      if (qr) {
+        console.log('\n===================================================');
+        console.log('📱 CÓDIGO QR GENERADO PARA DRIMIN SERVICES WHATSAPP:');
+        qrcodeTerminal.generate(qr, { small: true });
+        console.log('===================================================\n');
 
-      try {
-        currentQrDataUrl = await QRCode.toDataURL(qr, { margin: 2, width: 350 });
-      } catch (e) {
-        console.error('Error convirtiendo QR Drimin:', e.message);
-      }
-    }
-
-    if (connection === 'close') {
-      isConnecting = false;
-      const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-      const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-      console.log(`🔴 Conexión WhatsApp Drimin en estado: ${statusCode}`);
-
-      if (statusCode === 428) {
-        console.log('📱 QR Drimin listo y activo a la espera de ser escaneado por el usuario.');
-        return;
+        try {
+          currentQrDataUrl = await QRCode.toDataURL(qr, { margin: 2, width: 350 });
+        } catch (e) {
+          console.error('Error convirtiendo QR Drimin:', e.message);
+        }
       }
 
-      isConnected = false;
+      if (connection === 'close') {
+        isConnecting = false;
+        isConnected = false;
+        if (connectingTimeout) clearTimeout(connectingTimeout);
 
-      if (isLoggedOut || statusCode === 401 || statusCode === 403) {
-        console.log('⚠️ Sesión cerrada por WhatsApp. Limpiando credenciales para generar QR fresco...');
-        currentQrDataUrl = null;
-        clearAuthInfo();
-        setTimeout(() => connectToWhatsApp(true), 2000);
-      } else if (statusCode === 515) {
-        console.log('🔄 Reinicio requerido por WhatsApp (código 515). Reconectando de inmediato...');
-        setTimeout(() => connectToWhatsApp(false), 1500);
-      } else {
-        console.log(`⏳ Reintentando conexión con WhatsApp en 5 segundos (código ${statusCode || 'desconocido'})...`);
+        const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+        console.log(`🔴 [Baileys] Conexión cerrada. Código de estado: ${statusCode}`);
+
+        // 428: Esperando escaneo de QR
+        if (statusCode === 428) {
+          console.log('📱 [Baileys] Código QR listo y esperando escaneo del cliente.');
+          return;
+        }
+
+        // ÚNICAMENTE si el usuario cerró la sesión formalmente desde su WhatsApp en el celular
+        if (isLoggedOut) {
+          console.log('⚠️ [Baileys] Sesión cerrada explícitamente desde WhatsApp. Limpiando credenciales para emitir nuevo QR...');
+          currentQrDataUrl = null;
+          clearAuthInfo();
+          setTimeout(() => connectToWhatsApp(true), 2000);
+          return;
+        }
+
+        // 515: Reinicio inmediato requerido por WhatsApp
+        if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
+          console.log('🔄 [Baileys] Reinicio requerido por WhatsApp (515). Reconectando en 1.5s...');
+          setTimeout(() => connectToWhatsApp(false), 1500);
+          return;
+        }
+
+        // Cualquier otro código (microcortes de red, timeout, caída temporal)
+        // CONSERVAR LAS CREDENCIALES y reconectar automáticamente
+        console.log(`⏳ [Baileys] Reconectando automáticamente a WhatsApp en 4 segundos (código ${statusCode || 'red'})...`);
         setTimeout(() => {
           if (!isConnected) {
             connectToWhatsApp(false);
           }
-        }, 5000);
+        }, 4000);
+
+      } else if (connection === 'open') {
+        isConnecting = false;
+        isConnected = true;
+        currentQrDataUrl = null;
+        if (connectingTimeout) clearTimeout(connectingTimeout);
+
+        console.log('\n===================================================');
+        console.log('✅ WHATSAPP DRIMIN SERVICES CONECTADO EXITOSAMENTE!');
+        console.log('===================================================\n');
       }
-    } else if (connection === 'open') {
-      isConnecting = false;
-      console.log('\n===================================================');
-      console.log('✅ WHATSAPP DRIMIN SERVICES CONECTADO EXITOSAMENTE VÍA CÓDIGO QR!');
-      console.log('===================================================\n');
-      isConnected = true;
-      currentQrDataUrl = null;
-    }
-  });
+    });
 
-  waSocket.ev.on('messages.upsert', async (m) => {
-    try {
-      if (m.type !== 'notify') return;
+    waSocket.ev.on('messages.upsert', async (m) => {
+      try {
+        if (m.type !== 'notify') return;
 
-      for (const msg of m.messages) {
-        if (!msg.message) continue;
+        for (const msg of m.messages) {
+          if (!msg.message) continue;
 
-        const remoteJid = msg.key.remoteJid;
-        if (!remoteJid || remoteJid.endsWith('@g.us')) continue;
+          const remoteJid = msg.key.remoteJid;
+          if (!remoteJid || remoteJid.endsWith('@g.us')) continue;
 
-        const textMessage = msg.message.conversation ||
-          msg.message.extendedTextMessage?.text ||
-          msg.message.imageMessage?.caption ||
-          '';
+          const textMessage = msg.message.conversation ||
+            msg.message.extendedTextMessage?.text ||
+            msg.message.imageMessage?.caption ||
+            '';
 
-        const rawPhone = remoteJid.replace('@s.whatsapp.net', '');
-        const senderPhone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
+          const rawPhone = remoteJid.replace('@s.whatsapp.net', '');
+          const senderPhone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-        // 1. DETECCIÓN DE INTERVENCIÓN HUMANA (FELIPE ESCRIBE DESDE SU TELÉFONO)
-        if (msg.key.fromMe) {
-          const trimmed = textMessage.trim().toLowerCase();
+          // 1. DETECCIÓN DE INTERVENCIÓN HUMANA (FELIPE ESCRIBE DESDE SU TELÉFONO)
+          if (msg.key.fromMe) {
+            const trimmed = textMessage.trim().toLowerCase();
 
-          // Comandos manuales para Felipe
-          if (trimmed === '#bot_on' || trimmed === '#activar') {
-            unpauseChat(remoteJid);
-            console.log(`🟢 [HumanTakeover] Felipe reactivó el bot para [${senderPhone}]`);
-            await waSocket.sendMessage(remoteJid, { text: '🤖 *[Asistente Drimin reactivado en este chat]*' });
+            // Comandos manuales para Felipe
+            if (trimmed === '#bot_on' || trimmed === '#activar') {
+              unpauseChat(remoteJid);
+              console.log(`🟢 [HumanTakeover] Felipe reactivó el bot para [${senderPhone}]`);
+              await waSocket.sendMessage(remoteJid, { text: '🤖 *[Asistente Drimin reactivado en este chat]*' });
+              continue;
+            }
+            if (trimmed === '#bot_off' || trimmed === '#pausar') {
+              pauseChat(remoteJid, 24 * 60 * 60 * 1000); // 24 horas
+              console.log(`🔴 [HumanTakeover] Felipe pausó el bot por 24h para [${senderPhone}]`);
+              await waSocket.sendMessage(remoteJid, { text: '👤 *[Asistente Drimin pausado por 24h en este chat]*' });
+              continue;
+            }
+
+            // Detección automática: si Felipe escribe cualquier mensaje en este chat,
+            // el bot se silencia automáticamente por 2 horas para no interrumpir
+            pauseChat(remoteJid, 2 * 60 * 60 * 1000);
+            console.log(`👤 [HumanTakeover] Felipe intervino en el chat con [${senderPhone}]. Bot silenciado automáticamente por 2 horas.`);
             continue;
           }
-          if (trimmed === '#bot_off' || trimmed === '#pausar') {
-            pauseChat(remoteJid, 24 * 60 * 60 * 1000); // 24 horas
-            console.log(`🔴 [HumanTakeover] Felipe pausó el bot por 24h para [${senderPhone}]`);
-            await waSocket.sendMessage(remoteJid, { text: '👤 *[Asistente Drimin pausado por 24h en este chat]*' });
+
+          if (!textMessage.trim()) continue;
+
+          // 2. VERIFICACIÓN: SI EL CHAT ESTÁ EN PAUSA HUMANA, EL BOT NO RESPONDE
+          if (isChatPaused(remoteJid)) {
+            console.log(`🤫 [HumanTakeover] Mensaje de [${senderPhone}] recibido, pero omitido porque Felipe está atendiendo personalmente este chat.`);
             continue;
           }
 
-          // Detección automática: si Felipe escribe cualquier mensaje en este chat,
-          // el bot se silencia automáticamente por 2 horas para no interrumpir
-          pauseChat(remoteJid, 2 * 60 * 60 * 1000);
-          console.log(`👤 [HumanTakeover] Felipe intervino en el chat con [${senderPhone}]. Bot silenciado automáticamente por 2 horas.`);
-          continue;
-        }
+          const pushName = msg.pushName || 'Cliente Drimin';
+          console.log(`📩 Mensaje entrante WhatsApp Drimin de [${senderPhone}] (${pushName}): "${textMessage}"`);
 
-        if (!textMessage.trim()) continue;
+          const history = getSessionHistory(remoteJid);
+          const result = await processMessage({
+            message: textMessage,
+            history,
+            senderPhone,
+            pushName
+          });
 
-        // 2. VERIFICACIÓN: SI EL CHAT ESTÁ EN PAUSA HUMANA, EL BOT NO RESPONDE
-        if (isChatPaused(remoteJid)) {
-          console.log(`🤫 [HumanTakeover] Mensaje de [${senderPhone}] recibido, pero omitido porque Felipe está atendiendo personalmente este chat.`);
-          continue;
-        }
+          if (result && result.reply) {
+            updateSessionHistory(remoteJid, textMessage, result.reply);
 
-        const pushName = msg.pushName || 'Cliente Drimin';
-        console.log(`📩 Mensaje entrante WhatsApp Drimin de [${senderPhone}] (${pushName}): "${textMessage}"`);
+            await waSocket.sendMessage(remoteJid, { text: result.reply }, { quoted: msg });
+            console.log(`📤 Respuesta enviada por WhatsApp Drimin a [${senderPhone}]!`);
 
-        const history = getSessionHistory(remoteJid);
-        const result = await processMessage({
-          message: textMessage,
-          history,
-          senderPhone,
-          pushName
-        });
-
-        if (result && result.reply) {
-          updateSessionHistory(remoteJid, textMessage, result.reply);
-
-          await waSocket.sendMessage(remoteJid, { text: result.reply }, { quoted: msg });
-          console.log(`📤 Respuesta enviada por WhatsApp Drimin a [${senderPhone}]!`);
-
-          const qrDataUrl = result.voucher?.qrCodeDataUrl || result.voucher?.qrDataUrl;
-          if (qrDataUrl) {
-            try {
-              const base64Data = qrDataUrl.replace(/^data:image\/png;base64,/, "");
-              const buffer = Buffer.from(base64Data, 'base64');
-              await waSocket.sendMessage(remoteJid, {
-                image: buffer,
-                caption: `🎟️ *Pase Digital Oficial de Reunión - Drimin Services SpA*\n` +
-                         `• Código: *${result.voucher.code}*\n` +
-                         `• Cliente: *${result.voucher.clientName}*\n` +
-                         `• Estado: *Confirmada*\n\n` +
-                         `Conserva este código QR para el ingreso y validación de tu atención.`
-              }, { quoted: msg });
-              console.log(`🖼️ Código QR enviado exitosamente a [${senderPhone}]!`);
-            } catch (qrErr) {
-              console.error("Error enviando imagen QR:", qrErr.message);
+            const qrDataUrl = result.voucher?.qrCodeDataUrl || result.voucher?.qrDataUrl;
+            if (qrDataUrl) {
+              try {
+                const base64Data = qrDataUrl.replace(/^data:image\/png;base64,/, "");
+                const buffer = Buffer.from(base64Data, 'base64');
+                await waSocket.sendMessage(remoteJid, {
+                  image: buffer,
+                  caption: `🎟️ *Pase Digital Oficial de Reunión - Drimin Services SpA*\n` +
+                           `• Código: *${result.voucher.code}*\n` +
+                           `• Cliente: *${result.voucher.clientName}*\n` +
+                           `• Estado: *Confirmada*\n\n` +
+                           `Conserva este código QR para el ingreso y validación de tu atención.`
+                }, { quoted: msg });
+                console.log(`🖼️ Código QR enviado exitosamente a [${senderPhone}]!`);
+              } catch (qrErr) {
+                console.error("Error enviando imagen QR:", qrErr.message);
+              }
             }
           }
         }
+      } catch (err) {
+        console.error('❌ Error procesando mensaje de WhatsApp Drimin:', err.message);
       }
-    } catch (err) {
-      console.error('Error procesando mensaje de WhatsApp Drimin:', err);
-    }
-  });
+    });
+
+  } catch (initErr) {
+    console.error('❌ [Baileys] Error durante la inicialización:', initErr.message);
+    isConnecting = false;
+    setTimeout(() => connectToWhatsApp(false), 5000);
+  }
 
   return waSocket;
 }
+
+// Watchdog de conexión: cada 30 segundos verifica si el socket sigue vivo
+setInterval(() => {
+  if (isConnected && waSocket) {
+    const wsReady = waSocket.ws?.readyState;
+    // 0: CONNECTING, 1: OPEN, 2: CLOSING, 3: CLOSED
+    if (wsReady !== undefined && wsReady !== 1 && wsReady !== 0) {
+      console.log(`⚠️ [Watchdog] Socket en estado no-abierto (${wsReady}). Reconectando automáticamente...`);
+      isConnected = false;
+      connectToWhatsApp(false);
+    }
+  }
+}, 30000);
 
 function getWhatsAppStatus() {
   return {
@@ -275,7 +313,7 @@ function getWhatsAppStatus() {
 }
 
 async function resetWhatsAppConnection() {
-  console.log('🔄 Reiniciando sesión de WhatsApp Drimin...');
+  console.log('🔄 [Baileys] Reiniciando sesión manualmente a solicitud del usuario...');
   isConnected = false;
   currentQrDataUrl = null;
   if (waSocket) {
