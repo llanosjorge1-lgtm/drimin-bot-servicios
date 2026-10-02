@@ -84,8 +84,20 @@ async function connectToWhatsApp(forceClean = false) {
     }
   }, 45000);
 
+  const credsFile = path.join(__dirname, 'baileys_auth_drimin', 'creds.json');
   if (forceClean) {
     clearAuthInfo();
+  } else if (fs.existsSync(credsFile)) {
+    try {
+      const credsData = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+      if (!credsData.me) {
+        console.log('🧹 [Baileys] Limpiando sesión previa sin autenticar para forzar emisión de nuevo QR...');
+        clearAuthInfo();
+      }
+    } catch (e) {
+      console.warn('⚠️ [Baileys] Error leyendo creds.json, limpiando para nuevo QR:', e.message);
+      clearAuthInfo();
+    }
   }
 
   // Cerrar y limpiar completamente cualquier socket previo
@@ -144,39 +156,26 @@ async function connectToWhatsApp(forceClean = false) {
         if (connectingTimeout) clearTimeout(connectingTimeout);
 
         const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-        console.log(`🔴 [Baileys] Conexión cerrada. Código de estado: ${statusCode}`);
+        const isLoggedOut = statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403;
+        console.log(`🔴 [Baileys] Conexión cerrada. Código de estado: ${statusCode}. ¿Cerrada por usuario/Logout?: ${isLoggedOut}`);
 
-        // 428: Esperando escaneo de QR
-        if (statusCode === 428) {
-          console.log('📱 [Baileys] Código QR listo y esperando escaneo del cliente.');
-          return;
-        }
-
-        // ÚNICAMENTE si el usuario cerró la sesión formalmente desde su WhatsApp en el celular
+        // ÚNICAMENTE si el usuario cerró la sesión formalmente desde su WhatsApp en el celular o credenciales inválidas
         if (isLoggedOut) {
           console.log('⚠️ [Baileys] Sesión cerrada explícitamente desde WhatsApp. Limpiando credenciales para emitir nuevo QR...');
           currentQrDataUrl = null;
           clearAuthInfo();
-          setTimeout(() => connectToWhatsApp(true), 2000);
+          setTimeout(() => connectToWhatsApp(true), 2500);
           return;
         }
 
-        // 515: Reinicio inmediato requerido por WhatsApp
-        if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
-          console.log('🔄 [Baileys] Reinicio requerido por WhatsApp (515). Reconectando en 1.5s...');
-          setTimeout(() => connectToWhatsApp(false), 1500);
-          return;
-        }
-
-        // Cualquier otro código (microcortes de red, timeout, caída temporal)
-        // CONSERVAR LAS CREDENCIALES y reconectar automáticamente
-        console.log(`⏳ [Baileys] Reconectando automáticamente a WhatsApp en 4 segundos (código ${statusCode || 'red'})...`);
+        // Para cualquier otro caso (428 esperando QR, 515 restart, 408 timeout, caída de red, sleep):
+        const delay = (statusCode === DisconnectReason.restartRequired || statusCode === 515) ? 1500 : 3500;
+        console.log(`⏳ [Baileys] Reconectando automáticamente a WhatsApp en ${delay / 1000}s (código: ${statusCode || 'red'})...`);
         setTimeout(() => {
           if (!isConnected) {
             connectToWhatsApp(false);
           }
-        }, 4000);
+        }, delay);
 
       } else if (connection === 'open') {
         isConnecting = false;
@@ -292,9 +291,16 @@ async function connectToWhatsApp(forceClean = false) {
   return waSocket;
 }
 
-// Watchdog de conexión: cada 30 segundos verifica si el socket sigue vivo
+// Watchdog de conexión proactivo: cada 15 segundos verifica que WhatsApp esté conectado y vivo
 setInterval(() => {
-  if (isConnected && waSocket) {
+  if (!isConnected) {
+    if (!isConnecting) {
+      console.log('⚠️ [Watchdog] WhatsApp no está conectado ni en proceso de conexión. Iniciando reconexión automática...');
+      connectToWhatsApp(false);
+    }
+    return;
+  }
+  if (waSocket) {
     const wsReady = waSocket.ws?.readyState;
     // 0: CONNECTING, 1: OPEN, 2: CLOSING, 3: CLOSED
     if (wsReady !== undefined && wsReady !== 1 && wsReady !== 0) {
@@ -303,13 +309,31 @@ setInterval(() => {
       connectToWhatsApp(false);
     }
   }
-}, 30000);
+}, 15000);
 
 function getWhatsAppStatus() {
   return {
     isConnected,
     qrCodeDataUrl: currentQrDataUrl
   };
+}
+
+async function reconnectWhatsApp() {
+  console.log('🔄 [Baileys] Reconectando manualmente WhatsApp Drimin conservando credenciales...');
+  isConnecting = false;
+  isConnected = false;
+  if (waSocket) {
+    try {
+      waSocket.ev.removeAllListeners();
+      if (waSocket.ws) {
+        waSocket.ws.close();
+      }
+      waSocket.end(new Error('Manual reconnect'));
+    } catch (e) {}
+    waSocket = null;
+  }
+  await connectToWhatsApp(false);
+  return { success: true, message: 'Reconexión iniciada con credenciales guardadas.' };
 }
 
 async function resetWhatsAppConnection() {
@@ -319,6 +343,9 @@ async function resetWhatsAppConnection() {
   if (waSocket) {
     try {
       waSocket.ev.removeAllListeners();
+      if (waSocket.ws) {
+        waSocket.ws.close();
+      }
       waSocket.end(new Error('Manual reset'));
     } catch (e) {}
     waSocket = null;
@@ -351,6 +378,7 @@ async function sendWhatsAppTextMessage(recipient, text) {
 module.exports = {
   connectToWhatsApp,
   getWhatsAppStatus,
+  reconnectWhatsApp,
   resetWhatsAppConnection,
   isChatPaused,
   pauseChat,

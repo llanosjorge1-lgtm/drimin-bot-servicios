@@ -78,9 +78,21 @@ document.addEventListener('DOMContentLoaded', () => {
   checkStatus();
   statusPollTimer = setInterval(checkStatus, 3000);
 
-  // Reiniciar QR
+  // Reconectar manteniendo credenciales
+  document.getElementById('btn-reconnect-qr')?.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/reconnect-whatsapp', { method: 'POST' });
+      const result = await res.json();
+      alert(result.message || 'Reconexión iniciada');
+      checkStatus();
+    } catch (err) {
+      alert('Error al reconectar');
+    }
+  });
+
+  // Reiniciar QR (limpiar y nuevo QR)
   document.getElementById('btn-reset-qr')?.addEventListener('click', async () => {
-    if (confirm('¿Deseas reiniciar la sesión de WhatsApp y generar un nuevo código QR?')) {
+    if (confirm('¿Deseas limpiar las credenciales previas y emitir un código QR completamente nuevo?')) {
       try {
         const res = await fetch('/api/reset-whatsapp', { method: 'POST' });
         const result = await res.json();

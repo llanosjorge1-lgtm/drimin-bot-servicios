@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const path = require('path');
-const { connectToWhatsApp, getWhatsAppStatus, resetWhatsAppConnection } = require('./whatsappBaileys');
+const { connectToWhatsApp, getWhatsAppStatus, resetWhatsAppConnection, reconnectWhatsApp } = require('./whatsappBaileys');
 const { processMessage } = require('./agentEngine');
 const { readDb, writeDb, getCompanyPaymentDetails, writeCompanyPayments, readCompanyPayments, readPendingRequests, resolvePendingRequest } = require('./db');
 const { validateAndRedeemVoucher, getVouchers } = require('./voucherService');
@@ -25,7 +25,17 @@ app.get('/api/status', (req, res) => {
   res.json(status);
 });
 
-// Reinicio manual de WhatsApp
+// Reconexión rápida manteniendo sesión existente
+app.post('/api/reconnect-whatsapp', async (req, res) => {
+  try {
+    const result = await reconnectWhatsApp();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Reinicio manual de WhatsApp (limpia credenciales y fuerza nuevo QR)
 app.post('/api/reset-whatsapp', async (req, res) => {
   try {
     const result = await resetWhatsAppConnection();
